@@ -3,7 +3,9 @@ import torch
 import torch.nn.functional as F
 
 from torch.utils.data.sampler import SubsetRandomSampler
-from utils import train, test
+from utils import train, test, predict_step
+from PIL import Image
+from torchvision import transforms
 
 class Client():
     def __init__(self, client_config:dict):
@@ -57,6 +59,18 @@ class Client():
         """Return a total size of the client's local data."""
         return len(self.train_loader.sampler)
     
+    def get_data_description(self, num_sample, model, feature_extractor, tokenizer):
+        """ get data description for num_sample using the language model """
+        ## get num_sample random indexes
+        indexes = np.random.choice(len(self.config["train_data"]), num_sample, replace=False)
+        ## transform batches into pil images
+        to_pil = transforms.ToPILImage()
+        batch_of_pil_images = [to_pil(self.config["train_data"][x][0]) for x in indexes]
+        ## get data description
+        client_description = predict_step(batch_of_pil_images, model, feature_extractor, tokenizer)
+
+        return client_description
+
     def train(self, algorithm):
         results= {}
         if algorithm == "FedAvg":

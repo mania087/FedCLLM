@@ -3,8 +3,31 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import time
-
+from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
+from PIL import Image
 from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
+
+
+def get_image_to_text_model():
+  model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+  feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+  tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+  return model, feature_extractor, tokenizer
+
+def predict_step(images, model, feature_extractor, tokenizer,
+                 gen_kwargs={"max_length": 16, "num_beams": 4}):
+
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  model.to(device)
+
+  pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
+  pixel_values = pixel_values.to(device)
+
+  output_ids = model.generate(pixel_values, **gen_kwargs)
+
+  preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+  preds = [pred.strip() for pred in preds]
+  return preds
 
 def train(net, 
           trainloader: torch.utils.data.DataLoader, 

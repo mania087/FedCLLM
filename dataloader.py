@@ -6,6 +6,15 @@ import torchvision
 import math
 from torch.utils.data import Dataset
 
+class To3dFrom1D(object):
+    """Convert 1d to 3d."""
+
+    def __call__(self, image):
+
+        # expand dimension
+        image = torch.cat((image, image, image), dim=0)
+        return image
+    
 class CustomDataset(Dataset):
     def __init__(self, tensors, transforms=None):
         self.tensors =tensors
@@ -53,7 +62,8 @@ def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, ii
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose(
-                [torchvision.transforms.ToTensor()]
+                [torchvision.transforms.ToTensor(),
+                 To3dFrom1D()]
             )
 
         training_dataset = torchvision.datasets.MNIST(
