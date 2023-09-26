@@ -1,10 +1,12 @@
 import torch
+import openai
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import time
 from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
 from PIL import Image
+from torchvision import transforms
 from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
 
 
@@ -28,6 +30,34 @@ def predict_step(images, model, feature_extractor, tokenizer,
   preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
   preds = [pred.strip() for pred in preds]
   return preds
+
+def get_api_key(txt_file):
+    contents = ''
+    with open(txt_file) as f:
+        contents = f.read()
+    return contents
+
+def get_completion(prompt, model="gpt-3.5-turbo"):
+    messages = [{"role": "user", "content": prompt}]
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=0, # this is the degree of randomness of the model's output
+    )
+    return response.choices[0].message["content"]
+
+def get_data_description(data, num_sample, model, feature_extractor, tokenizer):
+    """ get data description for num_sample using the language model """
+    ## get num_sample random indexes
+    indexes = np.random.choice(len(data), num_sample, replace=False)
+    ## transform batches into pil images
+    to_pil = transforms.ToPILImage()
+    batch_of_pil_images = [to_pil(data[x][0]) for x in indexes]
+    ## get data description
+    client_description = predict_step(batch_of_pil_images, model, feature_extractor, tokenizer)
+
+    return client_description
+  
 
 def train(net, 
           trainloader: torch.utils.data.DataLoader, 

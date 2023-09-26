@@ -34,7 +34,6 @@ class Client():
             # define samplers for obtaining training and validation batches
             train_sampler = SubsetRandomSampler(train_idx)
             valid_sampler = SubsetRandomSampler(valid_idx)
-            
             # prepare data loaders (combine dataset and sampler)
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
                                                             batch_size=self.config["batch_size"],
@@ -42,10 +41,17 @@ class Client():
             self.valid_loader = torch.utils.data.DataLoader(self.config["train_data"],
                                                             batch_size=self.config["batch_size"],
                                                             sampler=valid_sampler) 
+            
+            
+            # save raw train data
+            self.raw_train_data = [self.config["train_data"][x] for x in train_idx]
         else:
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
                                                             batch_size=self.config["batch_size"])
             self.valid_loader = None
+            
+            # save raw train data
+            self.raw_train_data = self.config["train_data"]
 
     @property
     def model(self):
@@ -58,18 +64,6 @@ class Client():
     def __len__(self):
         """Return a total size of the client's local data."""
         return len(self.train_loader.sampler)
-    
-    def get_data_description(self, num_sample, model, feature_extractor, tokenizer):
-        """ get data description for num_sample using the language model """
-        ## get num_sample random indexes
-        indexes = np.random.choice(len(self.config["train_data"]), num_sample, replace=False)
-        ## transform batches into pil images
-        to_pil = transforms.ToPILImage()
-        batch_of_pil_images = [to_pil(self.config["train_data"][x][0]) for x in indexes]
-        ## get data description
-        client_description = predict_step(batch_of_pil_images, model, feature_extractor, tokenizer)
-
-        return client_description
 
     def train(self, algorithm):
         results= {}

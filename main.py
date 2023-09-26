@@ -2,10 +2,14 @@ import numpy as np
 import torch
 import random
 import copy
+import openai 
 from dataloader import create_datasets
 from client import Client
 from model import CnnModel
-from utils import test, get_image_to_text_model
+from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key
+
+## set key
+openai.api_key  = get_api_key('backup/gpt_key.txt')
 
 ## set seed
 np.random.seed(seed=42)
@@ -25,6 +29,8 @@ iid = True
 
 ## Proposed method parameters
 num_sample = 10
+max_selected_client = 3
+num_evaluator_sample = 10
 
 ## load dataset for clients and malicious clients
 honest_client_numbers = num_clients - num_malicious_clients
@@ -140,8 +146,17 @@ elif algorithm=='Proposed':
     ## NOTE: If we create the model language model for each client, it will be too much for one computer
     img_text_model, feature_extractor, tokenizer = get_image_to_text_model()
 
+    # evaluator description
+    evaluator_description = get_data_description(test_dataset, num_evaluator_sample, img_text_model, feature_extractor, tokenizer)
+
     for train_round in range(fl_rounds):
         print(f'Round {train_round}...')
+        
+        ## Build description
+        overall_description= ""
+        # add evaluator description
+        overall_description += f"Evaluator: {evaluator_description}\n"
+
         ## number of clients to pick
         num_clients_to_pick = int(C * len(clients))
         ## list clients
@@ -149,11 +164,49 @@ elif algorithm=='Proposed':
         available_clients = [clients[client_index] for client_index in round_available_index]
 
         # for each listed available clients sample num_sample of their data and get it's description by language model
-        descriptions = []
-        for client in available_clients:
-            client_description= client.get_data_description(num_sample,img_text_model, feature_extractor, tokenizer)
-            descriptions.append(client_description)
-            print(f"{client.id}:{client_description}")
-    
+        for index,client in enumerate(available_clients):
+            client_description = get_data_description(client.raw_train_data , num_sample, img_text_model, feature_extractor, tokenizer)
+            overall_description += f"Client {index}: {client_description}\n"
+
+        ## set up the prompt
+        prompt = f"""
+        Your task is to list and sort maximum of {max_selected_client} clients which data description are most similar to the evaluator data description.
+
+        The clients and evaluator data descriptions are delimited with triple backticks.
+        Format your response as a Python list of client ids, sorted from most similar to least similar.
+
+        Data description: '''{overall_description}'''
+        """
+        
+        response = get_completion(prompt)
+        selected_client = [available_clients[int(x)] for x in response[1:-1].split(',')]
+
+        ## do training
+
+        for client in selected_client:
+            ## get updated model from server
+            client.model = copy.deepcopy(server_model)
+            ## train clients
+            client.train(algorithm=algorithm)
+        
+        ## Update server model
+        total_data_points = sum([len(train_clients)for train_clients in selected_client])
+        fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_client]
+
+        global_w = server_model.state_dict()
+        for net_id, train_clients in enumerate(selected_client):
+            net_para = train_clients.model.state_dict()
+            if net_id == 0:
+                for key in net_para:
+                    global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+            else:
+                for key in net_para:
+                    global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+        
+        ## global model load new weights
+        server_model.load_state_dict(global_w)
+
+        ## test model
+        print(test(server_model, evaluator_validation))
 else:
     pass
