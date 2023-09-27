@@ -64,7 +64,7 @@ class Client():
         """Return a total size of the client's local data."""
         return len(self.train_loader.sampler)
     
-    def train(self, algorithm):
+    def train(self, algorithm, verbose=False):
         results= {}
         if algorithm == "FedAvg":
             # FedAvg algorithm
@@ -72,11 +72,14 @@ class Client():
                             trainloader= self.train_loader, 
                             epochs= self.config["local_epoch"],
                             device= self.device, 
-                            valloader= self.valid_loader)
+                            valloader= self.valid_loader,
+                            verbose=verbose)
         else:
             # other algorithm
             pass
-        print(f"Train result client {self.id}: {results}")
+        
+        if verbose:
+            print(f"Train result client {self.id}: {results}")
     
     def test(self):
         loss,acc = test(net = self.model, 
