@@ -42,10 +42,12 @@ class CnnModel(nn.Module):
         self.fc3 = nn.Linear(84,num_classes)
 
     def forward(self, x):
+        
         x = self.conv1(x)
         x = self.conv2(x)
         # flatten the output of conv2 to (batch_size, 32 * 7 * 7)
-        x = torch.flatten(x, 1)      
+        x = torch.flatten(x, 1) 
+            
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         output = self.fc3(x)

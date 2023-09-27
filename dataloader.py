@@ -39,6 +39,7 @@ def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, ii
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose([
+                
                 torchvision.transforms.ToTensor(),
                 #torchvision.transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5))
             ])
@@ -62,7 +63,9 @@ def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, ii
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose(
-                [torchvision.transforms.ToTensor(),
+                [torchvision.transforms.ToPILImage(), 
+                 torchvision.transforms.Resize(32), 
+                 torchvision.transforms.ToTensor(),
                  To3dFrom1D()]
             )
 
