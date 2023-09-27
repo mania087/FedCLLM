@@ -17,14 +17,14 @@ torch.manual_seed(0)
 
 ## Experiment Parameters
 algorithm = "Proposed"
-num_clients = 100
-num_malicious_clients = 10
+num_clients = 10
+num_malicious_clients = 5
 num_classes = 10
 local_epoch = 1
 val_size = 0.0
 batch_size = 32
 fl_rounds = 100
-C = 0.2 # clients availability
+C = 1.0 # clients availability
 iid = True
 
 ## Proposed method parameters
@@ -97,7 +97,7 @@ print(f"Number of malicious clients: {num_malicious_clients}")
 
 ## start Federated Learning cycle:
 ## set server model 
-server_model = CnnModel(input_size=(3,28,28), num_classes=num_classes)
+server_model = CnnModel(input_size=(3,32,32), num_classes=num_classes)
 
 ### FedAvg:
 if algorithm=="FedAvg":
@@ -170,15 +170,15 @@ elif algorithm=='Proposed':
 
         ## set up the prompt
         prompt = f"""
-        Your task is to list and sort maximum of {max_selected_client} clients which data description are most similar to the evaluator data description.
-
-        The clients and evaluator data descriptions are delimited with triple backticks.
-        Format your response as a Python list of client ids, sorted from most similar to least similar.
-
         Data description: '''{overall_description}'''
+        
+        [...]
+        Fill this list with the ID of clients that have similar description with the evaluator's description. If there are no similar clients, return it as an empty list.
         """
         
         response = get_completion(prompt)
+        print(prompt)
+        print(f'Response from GPT: \n{response}')
         selected_client = [available_clients[int(x)] for x in response[1:-1].split(',')]
 
         ## do training
