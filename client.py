@@ -3,9 +3,7 @@ import torch
 import torch.nn.functional as F
 
 from torch.utils.data.sampler import SubsetRandomSampler
-from utils import train, test, predict_step
-from PIL import Image
-from torchvision import transforms
+from utils import train, test
 
 class Client():
     def __init__(self, client_config:dict):
@@ -34,14 +32,15 @@ class Client():
             # define samplers for obtaining training and validation batches
             train_sampler = SubsetRandomSampler(train_idx)
             valid_sampler = SubsetRandomSampler(valid_idx)
+            
             # prepare data loaders (combine dataset and sampler)
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
                                                             batch_size=self.config["batch_size"],
-                                                            sampler=train_sampler)
+                                                            sampler=train_sampler,
+                                                            drop_last=True)
             self.valid_loader = torch.utils.data.DataLoader(self.config["train_data"],
                                                             batch_size=self.config["batch_size"],
                                                             sampler=valid_sampler) 
-            
             
             # save raw train data
             self.raw_train_data = [self.config["train_data"][x] for x in train_idx]
@@ -64,7 +63,7 @@ class Client():
     def __len__(self):
         """Return a total size of the client's local data."""
         return len(self.train_loader.sampler)
-
+    
     def train(self, algorithm):
         results= {}
         if algorithm == "FedAvg":
@@ -84,3 +83,4 @@ class Client():
                         testloader = self.valid_loader,
                         device=self.device)
         print(f"Test result client {self.id}: {loss, acc}")
+        
