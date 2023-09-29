@@ -16,7 +16,7 @@ np.random.seed(seed=42)
 torch.manual_seed(0)
 
 ## Experiment Parameters
-algorithm = "FedAvg"
+algorithm = "Proposed"
 num_clients = 100
 num_malicious_clients = 0
 num_classes = 10
@@ -174,7 +174,7 @@ elif algorithm=='Proposed':
         Data description: '''{overall_description}'''
         
         [...]
-        Fill this list with the ID of clients that have similar description with the evaluator's description. If there are no similar clients, return it as an empty list.
+        Fill this list with the ID of clients that have similar context with the evaluator's description. If there are no clients with similar context, return it as an empty list.
         """
         
         response = get_completion(prompt)
