@@ -17,8 +17,8 @@ torch.manual_seed(0)
 
 ## Experiment Parameters
 algorithm = "Proposed"
-num_clients = 100
-num_malicious_clients = 0
+num_clients = 10
+num_malicious_clients = 5
 num_classes = 10
 local_epoch = 3
 val_size = 0.2
@@ -28,8 +28,8 @@ C = 1.0 # clients availability
 iid = True
 
 ## Proposed method parameters
-num_sample = 10
-num_evaluator_sample = 10
+num_sample = 5
+num_evaluator_sample = 5
 
 ## load dataset for clients and malicious clients
 honest_client_numbers = num_clients - num_malicious_clients
@@ -37,7 +37,7 @@ honest_client_numbers = num_clients - num_malicious_clients
 ## NOTE: somehow handling fraction using num clients and shards are hard, 
 ## There are some consideration to use dirilect
 local_datasets, test_dataset= create_datasets(data_path='data', 
-                                              dataset_name='CIFAR10', 
+                                              dataset_name='MNIST', 
                                               num_clients=100, 
                                               num_shards=200, 
                                               iid=iid, 
@@ -62,7 +62,10 @@ evaluator_validation = torch.utils.data.DataLoader(test_dataset,batch_size=1)
 ## do federated learning between honest clients and malicious clients
 # create honest clients 
 clients = []
+honestidx = []
+malidx = []
 for index, dataset in enumerate(honest_clients_dataset):
+    honestidx.append(index)
     clients.append(
         Client(
             {"id": index,
@@ -77,6 +80,7 @@ for index, dataset in enumerate(honest_clients_dataset):
 
 if num_malicious_clients > 0:
     for index, dataset in enumerate(malicious_datasets):
+        malidx.append(index)
         clients.append(
             Client(
                 {"id": index+len(honest_clients_dataset),
@@ -174,7 +178,8 @@ elif algorithm=='Proposed':
         Data description: '''{overall_description}'''
         
         [...]
-        Fill this list with the ID of clients that have similar context with the evaluator's description. If there are no clients with similar context, return it as an empty list.
+        Comparing the descriptions above, I want you to give me a list of client's ID that have very similar context with the evaluator's context by filling the empty bracket above. No need for explanation. Just fill the bracket with a list of client's ID.
+        If there are no clients with similar context, return it as an empty list.
         """
         
         response = get_completion(prompt)
