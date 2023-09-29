@@ -16,20 +16,19 @@ np.random.seed(seed=42)
 torch.manual_seed(0)
 
 ## Experiment Parameters
-algorithm = "Proposed"
-num_clients = 10
-num_malicious_clients = 5
+algorithm = "FedAvg"
+num_clients = 100
+num_malicious_clients = 0
 num_classes = 10
-local_epoch = 1
-val_size = 0.0
-batch_size = 32
+local_epoch = 3
+val_size = 0.2
+batch_size = 64
 fl_rounds = 100
 C = 1.0 # clients availability
 iid = True
 
 ## Proposed method parameters
 num_sample = 10
-max_selected_client = 3
 num_evaluator_sample = 10
 
 ## load dataset for clients and malicious clients
@@ -44,14 +43,15 @@ local_datasets, test_dataset= create_datasets(data_path='data',
                                               iid=iid, 
                                               transform=None, 
                                               print_count=True)
+if num_malicious_clients > 0:
+    malicious_datasets, _= create_datasets(data_path='data', 
+                                        dataset_name='CIFAR10', 
+                                        num_clients=num_malicious_clients, 
+                                        num_shards=200, 
+                                        iid=iid, 
+                                        transform=None, 
+                                        print_count=True)
 
-malicious_datasets, _= create_datasets(data_path='data', 
-                                       dataset_name='CIFAR10', 
-                                       num_clients=num_malicious_clients, 
-                                       num_shards=200, 
-                                       iid=iid, 
-                                       transform=None, 
-                                       print_count=True)
 # pick honest client datasets
 selected_indices = np.random.choice(len(local_datasets), honest_client_numbers, replace=False)
 honest_clients_dataset = [local_datasets[x] for x in selected_indices]
@@ -75,18 +75,19 @@ for index, dataset in enumerate(honest_clients_dataset):
         )
     )
 
-for index, dataset in enumerate(malicious_datasets):
-    clients.append(
-        Client(
-            {"id": index+len(honest_clients_dataset),
-              "train_data": dataset,
-              "val_size": val_size,
-              "batch_size": batch_size,
-              "is_malicious": True,
-              "local_epoch": local_epoch
-            }
+if num_malicious_clients > 0:
+    for index, dataset in enumerate(malicious_datasets):
+        clients.append(
+            Client(
+                {"id": index+len(honest_clients_dataset),
+                "train_data": dataset,
+                "val_size": val_size,
+                "batch_size": batch_size,
+                "is_malicious": True,
+                "local_epoch": local_epoch
+                }
+            )
         )
-    )
 
 # shuffle the client
 random.shuffle(clients)
