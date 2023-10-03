@@ -5,7 +5,7 @@ import copy
 import openai 
 from dataloader import create_datasets
 from client import Client
-from model import CnnModel
+from model import CnnModel, ResNet50
 from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key
 
 ## set key
@@ -17,10 +17,10 @@ torch.manual_seed(0)
 
 ## Experiment Parameters
 algorithm = "FedAvg"
-num_clients = 100
+num_clients = 10
 num_malicious_clients = 0
 num_classes = 10
-local_epoch = 3
+local_epoch = 1
 val_size = 0.2
 batch_size = 64
 fl_rounds = 100
@@ -38,7 +38,7 @@ honest_client_numbers = num_clients - num_malicious_clients
 ## There are some consideration to use dirilect
 local_datasets, test_dataset= create_datasets(data_path='data', 
                                               dataset_name='CIFAR10', 
-                                              num_clients=100, 
+                                              num_clients=honest_client_numbers, 
                                               num_shards=200, 
                                               iid=iid, 
                                               transform=None, 
@@ -98,7 +98,8 @@ print(f"Number of malicious clients: {num_malicious_clients}")
 
 ## start Federated Learning cycle:
 ## set server model 
-server_model = CnnModel(input_size=(3,32,32), num_classes=num_classes)
+#server_model = CnnModel(input_size=(3,32,32), num_classes=num_classes)
+server_model = ResNet50(num_classes)
 
 ### FedAvg:
 if algorithm=="FedAvg":

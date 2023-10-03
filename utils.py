@@ -64,13 +64,14 @@ def train(net,
           trainloader: torch.utils.data.DataLoader, 
           epochs: int,
           device: torch.device, 
-          valloader: torch.utils.data.DataLoader = None) -> None:
+          valloader: torch.utils.data.DataLoader = None,
+          verbose=False) -> None:
     
     """Train the network."""
     # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(net.parameters(), lr = 0.01)
-
+    
     print(f"Training {epochs} epoch(s) w/ {len(trainloader)} batches each")
     start_time = time.time()
     
@@ -95,7 +96,7 @@ def train(net,
             running_loss += loss.item()
             total_loss += loss.item()
             
-            if i % 100 == 99:  # print every 100 mini-batches
+            if (i % 100 == 99) and verbose:  # print every 100 mini-batches
                 print("[%d, %5d] loss: %.3f" % (epoch + 1, i + 1, running_loss / 100))
                 running_loss = 0.0
                 
@@ -129,8 +130,8 @@ def train(net,
         "validation_rec":val_rec,
         "validation_prec": val_prec,
     }
-
-    print(f"Epoch took: {total_time:.2f} seconds")
+    if verbose:
+        print(f"Epoch took: {total_time:.2f} seconds")
     return results
 
 
