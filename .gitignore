@@ -1,6 +1,10 @@
 data/
 __pycache__
 backup/
+logs/
 *.gguf
 *.ipynb
+models/
+multiple_run.sh
+GoogleNews-vectors-negative300.bin
 

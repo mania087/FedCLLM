@@ -63,12 +63,6 @@ class CnnModel(nn.Module):
         x = self.dropout(x)
         output = self.fc2(x)
         return output 
-    
-    
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 
 class BasicBlock(nn.Module):
