@@ -35,6 +35,7 @@ def get_args():
     parser.add_argument('--batch_size', type=int, default=64, help='Number of batch size for each client')
     parser.add_argument('--rounds', type=int, default=100, help='Number of rounds for FL training')
     parser.add_argument('--C', type=float, default=1.0, help='Percentage of clients available for each round')
+    parser.add_argument('--sim_threshold', type=float, default=0.5, help='Threshold for cosine similarity method')
     parser.add_argument('--iid', type=bool, default=True, help='Set data split to IID or non-IID')
     parser.add_argument('--num_description_sample', type=int, default=10, help='number of data descriptions to sample from each client and the server')
     args = parser.parse_args()
@@ -42,8 +43,33 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
+    mkdirs(args.logdir)
+    mkdirs(args.modeldir)
     
     date_time= datetime.datetime.now().strftime("%Y-%m-%d-%H%M-%S")
+    
+    if args.log_file_name is None:
+        argument_path = f'{args.algorithm}_arguments-{date_time}.json'
+    else:
+        argument_path = args.log_file_name + '.json'
+    with open(os.path.join(args.logdir, argument_path), 'w') as f:
+        json.dump(vars(args), f, indent=4)
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+        
+    if args.log_file_name is None:
+        args.log_file_name = f'{args.algorithm}_log-{date_time}'
+    
+    log_path = args.log_file_name + '.log'
+    logging.basicConfig(
+        filename=os.path.join(args.logdir, log_path),
+        format='%(asctime)s %(levelname)-8s %(message)s',
+        datefmt='%m-%d %H:%M', level=logging.DEBUG, filemode='w')
+    
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+        
+    logger.info("#" * 100)
     
     ## load dataset for clients and malicious clients
     honest_client_numbers = args.num_clients - args.num_malicious_clients
@@ -110,28 +136,43 @@ if __name__ == '__main__':
     print(f"Number of honest clients: {honest_client_numbers}")
     print(f"Number of malicious clients: {args.num_malicious_clients}")
     
+    logger.info(f"Number of honest clients: {honest_client_numbers}")
+    logger.info(f"Number of malicious clients: {args.num_malicious_clients}")
+
     ## start Federated Learning cycle:
     ## set server model 
     #server_model = CnnModel(input_size=(3,32,32), num_classes=num_classes)
     server_model = ResNet50(args.n_class)
-
+    
+    ## set recording metrics
+    metrics = {
+        "f1": [],
+        "acc": [],
+        "rec": [],
+        "prec": [],
+        "loss": []
+    }
     ### FedAvg:
+    logger.info(f"Starting algorithm : {args.algorithm}")
     if args.algorithm=="FedAvg":
         ## Set algorithm specific requirements
 
         for train_round in range(args.rounds):
             print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
             ## number of clients to pick
             num_clients_to_pick = int(args.C * len(clients))
             ## pick clients
             round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
             selected_clients = [clients[client_index] for client_index in round_selected_clients]
             print(f'Training with {len(selected_clients)} clients...')
+            logger.info(f'Training with {len(selected_clients)} clients...')
 
             for train_clients in selected_clients:
                 ## get updated model from server
                 train_clients.model = copy.deepcopy(server_model)
                 ## train clients
+                logger.info(f'Training client {train_clients.id}...')
                 train_clients.train(algorithm=args.algorithm)
             
             ## Update server model
@@ -152,7 +193,15 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            print(test(server_model, evaluator_validation))
+            test_loss, results = test(server_model, evaluator_validation)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
             
             ## save model
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
@@ -171,6 +220,7 @@ if __name__ == '__main__':
             evaluator_description = get_data_description(test_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
             
             print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
             
             ## Build description
             overall_description= ""
@@ -199,6 +249,7 @@ if __name__ == '__main__':
             response = get_completion(prompt)
             print(prompt)
             print(f'Response from GPT: \n{response}')
+            logger.info(f'Response from GPT, selected clients: {response}...')
             selected_client = [available_clients[int(x)] for x in response[1:-1].split(',')]
             
 
@@ -208,6 +259,7 @@ if __name__ == '__main__':
                 ## get updated model from server
                 client.model = copy.deepcopy(server_model)
                 ## train clients
+                logger.info(f'Training client {client.id}...')
                 client.train(algorithm=args.algorithm)
             
             ## Update server model
@@ -228,7 +280,15 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            print(test(server_model, evaluator_validation))
+            test_loss, results = test(server_model, evaluator_validation)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
             
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
     
@@ -237,8 +297,6 @@ if __name__ == '__main__':
         ## Open image to text model
         ## NOTE: If we create the model language model for each client, it will be too much for one computer
         img_text_model, feature_extractor, tokenizer = get_image_to_text_model()
-        
-        similariy_threshold = 0.5
         
         ## load pretrained word2vec
         word_model = gensim.downloader.load('word2vec-google-news-300')
@@ -249,9 +307,11 @@ if __name__ == '__main__':
             evaluator_description = get_data_description(test_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
             
             print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
             
             ## Print evaluator description
             print(f'Evaluator description:{evaluator_description}')
+            logger.info(f'Evaluator description:{evaluator_description}')
 
             ## number of clients to pick
             num_clients_to_pick = int(args.C * len(clients))
@@ -265,6 +325,7 @@ if __name__ == '__main__':
             for index,client in enumerate(available_clients):
                 client_description = get_data_description(client.raw_train_data , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
                 print(f'Client {index} description:{client_description}')
+                logger.info(f'Client {index} description:{client_description}')
                 # get distance
                 client_similarity = compare_sentences_score(evaluator_description,client_description,word_model)
                 avg_similarity = np.average(np.array(client_similarity))
@@ -272,17 +333,19 @@ if __name__ == '__main__':
                 print(f'Similarity of client {index}:{avg_similarity}')
                 logger.info(f'Similarity of client {index}:{avg_similarity}')
                 # threshold for including the client
-                if avg_similarity > similariy_threshold:
+                if avg_similarity > args.sim_threshold:
                     selected_client.append(client)
                     selected_client_index.append(index)
                     
             print(f'Included Clients:{selected_client_index}')
+            logger.info(f'Included Clients:{selected_client_index}')
                     
             ## do training
             for client in selected_client:
                 ## get updated model from server
                 client.model = copy.deepcopy(server_model)
                 ## train clients
+                logger.info(f'Training client {client.id}...')
                 client.train(algorithm=args.algorithm)
             
             ## Update server model
@@ -303,8 +366,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            print(test(server_model, evaluator_validation))
+            test_loss, results = test(server_model, evaluator_validation)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
             
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
     else:
         pass
+    
+    # print results in the end
+    print(f"Global testing results : {metrics}")
+    logger.info(f"Global testing results : {metrics}")
