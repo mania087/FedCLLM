@@ -74,7 +74,14 @@ class Client():
                             device= self.device, 
                             valloader= self.valid_loader,
                             verbose=verbose)
-            
+        elif algorithm == "Shapley":
+            # FedAvg algorithm
+            results = train(net=self.model, 
+                            trainloader= self.train_loader, 
+                            epochs= self.config["local_epoch"],
+                            device= self.device, 
+                            valloader= self.valid_loader,
+                            verbose=verbose)
         elif algorithm == "Proposed":
             # Proposed algorithm
             results = train(net=self.model, 

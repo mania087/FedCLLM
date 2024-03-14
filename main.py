@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import random
 import copy
+import itertools
 import datetime
 import openai 
 import logging
@@ -13,7 +14,7 @@ import argparse
 from dataloader import create_datasets
 from client import Client
 from model import CnnModel, ResNet50
-from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key, mkdirs, compare_sentences_score
+from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key, mkdirs, compare_sentences_score, get_model_combination
 
 ## set key
 openai.api_key  = get_api_key('backup/gpt_key.txt')
@@ -97,7 +98,7 @@ if __name__ == '__main__':
     honest_clients_dataset = [local_datasets[x] for x in selected_indices]
 
     # create evaluator test dataset
-    evaluator_validation = torch.utils.data.DataLoader(test_dataset,batch_size=1) 
+    evaluator_validation = torch.utils.data.DataLoader(test_dataset,batch_size=args.batch_size) 
 
     ## do federated learning between honest clients and malicious clients
     # create honest clients 
@@ -376,6 +377,80 @@ if __name__ == '__main__':
             metrics["f1"].append(results["f1"])
             metrics["prec"].append(results["prec"])
             
+            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
+    ## Shapley Value ##
+    elif args.algorithm=='Shapley':
+        ## Set algorithm specific requirements
+
+        for train_round in range(args.rounds):
+            print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
+            ## number of clients to pick
+            num_clients_to_pick = int(args.C * len(clients))
+            ## pick clients
+            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
+            selected_clients = [clients[client_index] for client_index in round_selected_clients]
+            print(f'Training with {len(selected_clients)} clients...')
+            logger.info(f'Training with {len(selected_clients)} clients...')
+            
+            # get availible local updates first
+            local_models= []
+            for train_clients in selected_clients:
+                ## get updated model from server
+                train_clients.model = copy.deepcopy(server_model)
+                ## train clients
+                logger.info(f'Training client {train_clients.id}...')
+                train_clients.train(algorithm=args.algorithm)
+                ## get local model
+                local_models.append(train_clients.model.state_dict())
+            
+            ## Count the frequencies
+            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
+            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            
+            ## get the permutation and try combination of local models and see which one is the best accordnnig to the evaluator test dataset
+            best_model = None
+            best_accuracy = 0.0
+            template_model = copy.deepcopy(server_model)
+            for i in range(0,len(local_models)):
+                model_indexes = list(range(0,len(local_models)))
+                list_of_permutations = list(itertools.combinations(model_indexes, i+1))
+                
+                for permutation in list_of_permutations:
+                    # get the model parameters
+                    model_parameters = []
+                    for index_model in permutation:
+                        model_parameters.append(local_models[index_model])
+                    # get the combination parameters
+                    combination_weight = get_model_combination(model_parameters, template_model)
+                    # load the combination parameters
+                    template_model.load_state_dict(combination_weight)
+                    ## test model
+                    _, results = test(template_model, evaluator_validation)
+                    
+                    print(f"model of {permutation}, metrics:{results}")
+                    logger.info(f"model of {permutation}, metrics:{results}")
+                    
+                    if results["acc"]>best_accuracy:
+                        # replace the best model
+                        best_accuracy = results["acc"]
+                        best_model = copy.deepcopy(template_model)
+            
+            ## load global model with the best model
+            server_model.load_state_dict(best_model.state_dict())
+
+            ## test model
+            test_loss, results = test(server_model, evaluator_validation)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
+            
+            ## save model
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
     else:
         pass

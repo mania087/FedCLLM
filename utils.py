@@ -22,27 +22,39 @@ def mkdirs(dirpath):
         os.makedirs(dirpath)
     except Exception as _:
         pass
-    
+
+def get_model_combination(local_parameters, server_model):
+    combination_model_parameter = server_model.state_dict()
+    for net_id, net_para in enumerate(local_parameters):
+        if net_id == 0:
+            for key in net_para:
+                combination_model_parameter[key] = net_para[key] * (1/len(local_parameters))
+        else:
+            for key in net_para:
+                combination_model_parameter[key] += net_para[key] * (1/len(local_parameters))
+    # return the combination of local models
+    return combination_model_parameter
+            
 def get_image_to_text_model():
-  model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-  feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-  tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-  return model, feature_extractor, tokenizer
+    model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    return model, feature_extractor, tokenizer
 
 def predict_step(images, model, feature_extractor, tokenizer,
                  gen_kwargs={"max_length": 16, "num_beams": 4}):
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  model.to(device)
+    pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
+    pixel_values = pixel_values.to(device)
 
-  pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
-  pixel_values = pixel_values.to(device)
+    output_ids = model.generate(pixel_values, **gen_kwargs)
 
-  output_ids = model.generate(pixel_values, **gen_kwargs)
-
-  preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-  preds = [pred.strip() for pred in preds]
-  return preds
+    preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+    preds = [pred.strip() for pred in preds]
+    return preds
 
 def get_api_key(txt_file):
     contents = ''
