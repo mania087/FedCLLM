@@ -21,6 +21,8 @@ class Client():
         else:
             self.device = 'cuda'
 
+        self.train_dataset = self.config["train_data"]
+        
         # if we use validation
         if self.config["val_size"] > 0.0:
             num_train = len(self.config["train_data"])
@@ -42,15 +44,11 @@ class Client():
                                                             batch_size=self.config["batch_size"],
                                                             sampler=valid_sampler) 
             
-            # save raw train data
-            self.raw_train_data = [self.config["train_data"][x] for x in train_idx]
         else:
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
                                                             batch_size=self.config["batch_size"])
             self.valid_loader = None
             
-            # save raw train data
-            self.raw_train_data = self.config["train_data"]
 
     @property
     def model(self):

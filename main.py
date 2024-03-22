@@ -10,6 +10,7 @@ import os
 import json
 import gensim.downloader
 import argparse
+import torchvision.models as models
 
 from dataloader import create_datasets
 from client import Client
@@ -26,12 +27,14 @@ torch.manual_seed(0)
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log_file_name', type=str, default=None, help='The log file name')
+    parser.add_argument('--data_dir', type=str, required=False, default='../../dataset', help='Data directory path')
+    parser.add_argument('--dataset', type=str, required=False, default='Food101', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10')
+    parser.add_argument('--malicious_dataset', type=str, required=False, default='TinyImagenet', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10')
     parser.add_argument('--logdir', type=str, required=False, default="./logs/", help='Log directory path')
     parser.add_argument('--modeldir', type=str, required=False, default="./models/", help='Model directory path')
     parser.add_argument('--algorithm', type=str, default='Proposed', help='Available algorithm: FedAvg, Proposed')
     parser.add_argument('--num_clients', type=int, default=15, help='Number of clients to simulate')
     parser.add_argument('--num_malicious_clients', type=int, default=5, help='Number of malicious clients to simulate')
-    parser.add_argument('--n_class', type=int, default=10, help='Number of available classes')
     parser.add_argument('--local_epoch', type=int, default=1, help='Number of local epoch for each round')
     parser.add_argument('--batch_size', type=int, default=64, help='Number of batch size for each client')
     parser.add_argument('--rounds', type=int, default=100, help='Number of rounds for FL training')
@@ -77,28 +80,31 @@ if __name__ == '__main__':
 
     ## NOTE: somehow handling fraction using num clients and shards are hard, 
     ## There are some consideration to use dirilect
-    local_datasets, test_dataset= create_datasets(data_path='data', 
-                                                dataset_name='CIFAR10', 
-                                                num_clients=honest_client_numbers, 
-                                                num_shards=200, 
-                                                iid=args.iid, 
-                                                transform=None, 
-                                                print_count=True)
+    local_datasets, test_dataset, val_dataset, category = create_datasets(data_path=args.data_dir, 
+                                                                dataset_name=args.dataset, 
+                                                                num_clients=honest_client_numbers, 
+                                                                num_shards=200, 
+                                                                iid=args.iid, 
+                                                                transform=None, 
+                                                                print_count=True)
+    
     if args.num_malicious_clients > 0:
-        malicious_datasets, _= create_datasets(data_path='data', 
-                                               dataset_name='MNIST', 
-                                               num_clients=args.num_malicious_clients, 
-                                               num_shards=200, 
-                                               iid=args.iid, 
-                                               transform=None, 
-                                               print_count=True)
+        malicious_datasets, _, _= create_datasets(data_path=args.data_dir, 
+                                                  dataset_name=args.malicious_dataset, 
+                                                  num_clients=args.num_malicious_clients, 
+                                                  num_shards=200, 
+                                                  separate_validation_data=False,
+                                                  iid=args.iid, 
+                                                  transform=None, 
+                                                  print_count=True)
 
     # pick honest client datasets
     selected_indices = np.random.choice(len(local_datasets), honest_client_numbers, replace=False)
     honest_clients_dataset = [local_datasets[x] for x in selected_indices]
 
-    # create evaluator test dataset
-    evaluator_validation = torch.utils.data.DataLoader(test_dataset,batch_size=args.batch_size) 
+    # create evaluator & test loader
+    test_loader = torch.utils.data.DataLoader(test_dataset,batch_size=args.batch_size)
+    val_loader = torch.utils.data.DataLoader(val_dataset,batch_size=args.batch_size)
 
     ## do federated learning between honest clients and malicious clients
     # create honest clients 
@@ -143,7 +149,11 @@ if __name__ == '__main__':
     ## start Federated Learning cycle:
     ## set server model 
     #server_model = CnnModel(input_size=(3,32,32), num_classes=num_classes)
-    server_model = ResNet50(args.n_class)
+    
+    #server_model = ResNet50(num_categories)
+    print('number of classes:', category)
+    server_model = models.mobilenet_v2(pretrained=False)
+    server_model.classifier[1] = torch.nn.Linear(server_model.last_channel, category.shape[0])
     
     ## set recording metrics
     metrics = {
@@ -194,7 +204,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, evaluator_validation)
+            test_loss, results = test(server_model, test_loader)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -218,7 +228,7 @@ if __name__ == '__main__':
 
         for train_round in range(args.rounds):
             # evaluator description
-            evaluator_description = get_data_description(test_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
+            evaluator_description = get_data_description(val_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
             
             print(f'Round {train_round}...')
             logger.info(f'Round {train_round}...')
@@ -236,8 +246,12 @@ if __name__ == '__main__':
 
             # for each listed available clients sample num_sample of their data and get it's description by language model
             for index,client in enumerate(available_clients):
-                client_description = get_data_description(client.raw_train_data , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
-                overall_description += f"Client {index}: {client_description}\n"
+                client_description = get_data_description(client.train_dataset , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
+                #overall_description += f"Client {index}: {client_description}\n"
+                ## for debugging first
+                print(f'Client {client.id} description:{client_description}')
+                logger.info(f'Client {client.id} description:{client_description}')
+                overall_description += f"Client {client.id}: {client_description}\n"
 
             ## set up the prompt 
             prompt = f"""
@@ -251,14 +265,18 @@ if __name__ == '__main__':
             print(prompt)
             print(f'Response from GPT: \n{response}')
             logger.info(f'Response from GPT, selected clients: {response}...')
-            selected_client = [available_clients[int(x)] for x in response[1:-1].split(',')]
+            # selected_client = [available_clients[int(x)] for x in response[1:-1].split(',')]
+            ## for debugging first
+            parsed_reponse =  [int(x) for x in response[1:-1].split(',')]
+            selected_client = [client for client in available_clients if int(client.id) in parsed_reponse]
             
-
             ## do training
 
             for client in selected_client:
                 ## get updated model from server
                 client.model = copy.deepcopy(server_model)
+                # use multiple GPUs
+                client.model = torch.nn.DataParallel(client.model)
                 ## train clients
                 logger.info(f'Training client {client.id}...')
                 client.train(algorithm=args.algorithm)
@@ -269,7 +287,10 @@ if __name__ == '__main__':
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_client):
-                net_para = train_clients.model.state_dict()
+                try:
+                    net_para = train_clients.model.module.state_dict()
+                except AttributeError:
+                    net_para = train_clients.model.state_dict()
                 if net_id == 0:
                     for key in net_para:
                         global_w[key] = net_para[key] * fed_avg_freqs[net_id]
@@ -281,7 +302,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, evaluator_validation)
+            test_loss, results = test(server_model, test_loader)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -305,7 +326,7 @@ if __name__ == '__main__':
         
         for train_round in range(args.rounds):
             # evaluator description
-            evaluator_description = get_data_description(test_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
+            evaluator_description = get_data_description(val_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
             
             print(f'Round {train_round}...')
             logger.info(f'Round {train_round}...')
@@ -324,15 +345,22 @@ if __name__ == '__main__':
             selected_client = []
             selected_client_index = []
             for index,client in enumerate(available_clients):
-                client_description = get_data_description(client.raw_train_data , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
-                print(f'Client {index} description:{client_description}')
-                logger.info(f'Client {index} description:{client_description}')
+                client_description = get_data_description(client.train_dataset , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
+                #print(f'Client {index} description:{client_description}')
+                #logger.info(f'Client {index} description:{client_description}')
+                ## for debugging
+                print(f'Client {client.id} description:{client_description}')
+                logger.info(f'Client {client.id} description:{client_description}')
+                
                 # get distance
                 client_similarity = compare_sentences_score(evaluator_description,client_description,word_model)
                 avg_similarity = np.average(np.array(client_similarity))
                 
-                print(f'Similarity of client {index}:{avg_similarity}')
-                logger.info(f'Similarity of client {index}:{avg_similarity}')
+                #print(f'Similarity of client {index}:{avg_similarity}')
+                #logger.info(f'Similarity of client {index}:{avg_similarity}')
+                ## for debugging
+                print(f'Similarity of client {client.id}:{avg_similarity}')
+                logger.info(f'Similarity of client {client.id}:{avg_similarity}')
                 # threshold for including the client
                 if avg_similarity > args.sim_threshold:
                     selected_client.append(client)
@@ -367,7 +395,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, evaluator_validation)
+            test_loss, results = test(server_model, test_loader)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -426,7 +454,7 @@ if __name__ == '__main__':
                     # load the combination parameters
                     template_model.load_state_dict(combination_weight)
                     ## test model
-                    _, results = test(template_model, evaluator_validation)
+                    _, results = test(template_model, test_loader)
                     
                     print(f"model of {permutation}, metrics:{results}")
                     logger.info(f"model of {permutation}, metrics:{results}")
@@ -440,7 +468,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(best_model.state_dict())
 
             ## test model
-            test_loss, results = test(server_model, evaluator_validation)
+            test_loss, results = test(server_model, test_loader)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved

@@ -3,13 +3,11 @@ import openai
 import os
 import torch.nn as nn
 import numpy as np
-import torch.nn.functional as F
+import torchvision.transforms.functional as F
 import time
 import nltk
 
 from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
-from PIL import Image
-from torchvision import transforms
 from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
 
 from nltk.tokenize import word_tokenize
@@ -72,15 +70,18 @@ def get_completion(prompt, model="gpt-3.5-turbo"):
     )
     return response.choices[0].message["content"]
 
-def get_data_description(data, num_sample, model, feature_extractor, tokenizer):
+def get_data_description(data, num_sample, model, feature_extractor, tokenizer, resize=224):
     """ get data description for num_sample using the language model """
+    ## set to output raw data
+    data.return_raw = True
     ## get num_sample random indexes
     indexes = np.random.choice(len(data), num_sample, replace=False)
     ## transform batches into pil images
-    to_pil = transforms.ToPILImage()
-    batch_of_pil_images = [to_pil(data[x][0]) for x in indexes]
+    batch_of_pil_images = [F.resize(data[x][0], resize) for x in indexes]
     ## get data description
     client_description = predict_step(batch_of_pil_images, model, feature_extractor, tokenizer)
+    ## return data mode to preprocess
+    data.return_raw = False
 
     return client_description
   
