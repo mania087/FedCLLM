@@ -6,6 +6,7 @@ import torchvision
 import math
 import scipy.io
 import glob
+import pandas as pd
 
 from torch.utils.data import Dataset
 from PIL import Image
@@ -83,6 +84,12 @@ def create_datasets(data_path,
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize(mean, std),
             ])
+        
+        test_preprocess = torchvision.transforms.Compose([
+                torchvision.transforms.Resize(IMG_RESIZE), 
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize(mean, std),
+            ])
 
         training_dataset = torchvision.datasets.CIFAR10(
             root=data_path,
@@ -94,7 +101,7 @@ def create_datasets(data_path,
             root=data_path,
             train=False,
             download=True,
-            transform = preprocess
+            transform = test_preprocess
         )
 
     elif dataset_name == "MNIST":
@@ -112,6 +119,14 @@ def create_datasets(data_path,
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
+        
+        test_preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 To3dFrom1D(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
 
         training_dataset = torchvision.datasets.MNIST(
             root=data_path,
@@ -123,7 +138,7 @@ def create_datasets(data_path,
             root=data_path,
             train=False,
             download=False,
-            transform = preprocess
+            transform = test_preprocess
         )
         
     elif dataset_name == "FMNIST":
@@ -141,6 +156,14 @@ def create_datasets(data_path,
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
+        
+        test_preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 To3dFrom1D(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
 
         training_dataset = torchvision.datasets.FashionMNIST(
             root=data_path,
@@ -152,8 +175,57 @@ def create_datasets(data_path,
             root=data_path,
             train=False,
             download=True,
-            transform = preprocess
+            transform = test_preprocess
         )
+    # CUB 200 2011 dataset
+    elif dataset_name == "Cub2011":
+        std = (0.229, 0.224, 0.225)
+        mean = (0.485, 0.456, 0.406)
+        from_list_link = True
+        if transform:
+            preprocess = transform
+        else:
+            preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        
+        test_preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        
+        images = pd.read_csv(data_path+'/CUB_200_2011/CUB_200_2011/images.txt', sep=' ', names=['img_id', 'filepath'])
+        image_class_labels = pd.read_csv(data_path+'/CUB_200_2011/CUB_200_2011/image_class_labels.txt', sep=' ', names=['img_id', 'target'])
+        train_test_split_indexes = pd.read_csv(data_path+'/CUB_200_2011/CUB_200_2011/train_test_split.txt', sep=' ', names=['img_id', 'is_training_img'])
+        
+        temp = images.merge(image_class_labels, on='img_id')
+        temp = temp.merge(train_test_split_indexes, on='img_id')
+        # start the label from 0
+        temp['target'] = temp['target'] - 1
+        temp['filepath'] = data_path+'/CUB_200_2011/CUB_200_2011/images/' + temp['filepath']
+        
+        training_pd = temp[temp['is_training_img'] == 1]
+        test_pd = temp[temp['is_training_img'] == 0]
+        
+        training_dataset = CustomDataset(
+            training_pd['filepath'].values,
+            training_pd['target'].values,
+            transforms=preprocess,
+            from_list_link=from_list_link
+        )
+
+        test_dataset = CustomDataset(
+            test_pd['filepath'].values,
+            test_pd['target'].values,
+            transforms=test_preprocess,
+            from_list_link=from_list_link
+        )
+    
     # oxford 102 dataset
     elif dataset_name == "Oxford102":
         std = (0.229, 0.224, 0.225)
@@ -163,6 +235,13 @@ def create_datasets(data_path,
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        
+        test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
                  torchvision.transforms.Normalize(mean, std),
@@ -201,14 +280,14 @@ def create_datasets(data_path,
         val_dataset = CustomDataset(
             val_data,
             val_labels,
-            transforms=preprocess,
+            transforms=test_preprocess,
             from_list_link=from_list_link
         )
 
         test_dataset = CustomDataset(
             test_data,
             test_labels,
-            transforms=preprocess,
+            transforms=test_preprocess,
             from_list_link=from_list_link
         )
             
@@ -221,6 +300,13 @@ def create_datasets(data_path,
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        
+        test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
                  torchvision.transforms.Normalize(mean, std),
@@ -244,11 +330,11 @@ def create_datasets(data_path,
         )
         val_dataset = torchvision.datasets.ImageFolder(
             root=data_path+'/tiny-imagenet-200/val/',
-            transform = preprocess
+            transform = test_preprocess
         )
         test_dataset = torchvision.datasets.ImageFolder(
             root=data_path+'/tiny-imagenet-200/test/',
-            transform = preprocess
+            transform = test_preprocess
         )
         
     # food 101 dataset
@@ -260,6 +346,13 @@ def create_datasets(data_path,
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        
+        test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
                  torchvision.transforms.Normalize(mean, std),
@@ -303,7 +396,7 @@ def create_datasets(data_path,
         test_dataset = CustomDataset(
             test_images,
             test_labels,
-            transforms=preprocess,
+            transforms=test_preprocess,
             from_list_link=from_list_link
         )
     
@@ -327,7 +420,7 @@ def create_datasets(data_path,
         validation_dataset = [training_dataset.data[val_indexes], training_dataset.targets[val_indexes]]
 
         training_dataset = CustomDataset(new_train_dataset[0], new_train_dataset[1], transforms = preprocess, from_list_link=from_list_link)
-        val_dataset = CustomDataset(validation_dataset[0], validation_dataset[1], transforms = preprocess, from_list_link=from_list_link)
+        val_dataset = CustomDataset(validation_dataset[0], validation_dataset[1], transforms = test_preprocess, from_list_link=from_list_link)
     
     if training_dataset.data.ndim ==3: # make it batch (NxWxH => NxWxHx1)
         training_dataset.data= np.expand_dims(training_dataset.data, axis=3)
@@ -343,13 +436,15 @@ def create_datasets(data_path,
         training_labels = training_dataset.targets[shuffle]
 
         # partition information
-        stack_of_label = np.stack(
-            list(np.array_split(training_labels, num_clients))
-            ,axis=0)
-        # for counting label
-        count = torch.nn.functional.one_hot(torch.from_numpy(stack_of_label)).sum(dim = 1)
-        if print_count:
-            print(count)
+        stack_of_label = np.array_split(training_labels, num_clients)
+        # get the count of each label
+        count = []
+        for split in stack_of_label:
+            # for counting label
+            one_hot_count = [len(split[split == i]) for i in category]
+            if print_count:
+                print(one_hot_count)
+
         
         split_datasets = list(zip(
             np.array_split(training_inputs, num_clients),
@@ -422,7 +517,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "Food101"
+    dataset_name = "Cub2011"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
