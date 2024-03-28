@@ -41,7 +41,12 @@ class CustomDataset(Dataset):
             x = img.copy().convert('RGB')
             img.close()
         else:
+            # from numpy array
             x = self.data[index]
+            # if last array is 1d, convert to 3d
+            if x.shape[-1] == 1:
+                x = np.concatenate((x, x, x), axis=-1)
+            x = Image.fromarray(np.uint8(x))
             
         y = self.targets[index]
         
@@ -115,7 +120,6 @@ def create_datasets(data_path,
             preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -123,7 +127,6 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -152,7 +155,6 @@ def create_datasets(data_path,
             preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -160,7 +162,6 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -517,7 +518,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "Cub2011"
+    dataset_name = "FMNIST"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
@@ -527,6 +528,7 @@ if __name__ == '__main__':
                                                                    dataset_name, 
                                                                    num_clients=10, 
                                                                    num_shards=200, iid=True, transform=None, print_count=True)
+    
     print(len(val_dataset))
     sample_index = 1
     ex_dataset = local_datasets[0]
@@ -536,6 +538,7 @@ if __name__ == '__main__':
     sample_label = ex_dataset[sample_index][1]
     # Normalize data
     fig, ax = plt.subplots()
+    print(sample_image)
     
     print(f"Label {sample_label}")
     
