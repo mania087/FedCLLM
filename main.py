@@ -41,8 +41,8 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log_file_name', type=str, default=None, help='The log file name')
     parser.add_argument('--data_dir', type=str, required=False, default='../../dataset', help='Data directory path')
-    parser.add_argument('--dataset', type=str, required=False, default='Food101', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10')
-    parser.add_argument('--malicious_dataset', type=str, required=False, default='TinyImagenet', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10, Cub2011')
+    parser.add_argument('--dataset', type=str, required=False, default='Food101', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10, Cub2011, Oxford102')
+    parser.add_argument('--malicious_dataset', type=str, required=False, default='TinyImagenet', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10, Cub2011, Oxford102')
     parser.add_argument('--logdir', type=str, required=False, default="./logs/", help='Log directory path')
     parser.add_argument('--modeldir', type=str, required=False, default="./models/", help='Model directory path')
     parser.add_argument('--algorithm', type=str, default='Proposed', help='Available algorithm: FedAvg, Proposed, ACS, Shapley')
@@ -58,6 +58,7 @@ def get_args():
     parser.add_argument('--num_description_sample', type=int, default=10, help='number of data descriptions to sample from each client')
     parser.add_argument('--server_num_description', type=int, default=10, help='number of data descriptions to sample from the server')
     parser.add_argument('--random_select_fract', type=float, default=1.0, help='to select client randomly')
+    parser.add_argument('--server_momentum', type=float, default=0.1, help='FedAvgM parameter: momentum for the server')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate for the model')
     parser.add_argument('--opt', type=str, default='adam', help='optimizer for the model: sgd, adam, rmsprop')
     parser.add_argument('--word_summary_max', type=int, default=15, help='maximum number of words for summary, CURRENTLY FOR SERVER')
@@ -68,6 +69,12 @@ if __name__ == '__main__':
     args = get_args()
     mkdirs(args.logdir)
     mkdirs(args.modeldir)
+    
+    # check if CUDA is available
+    if not torch.cuda.is_available():
+        device = 'cpu'
+    else:
+        device = 'cuda'
     
     date_time= datetime.datetime.now().strftime("%Y-%m-%d-%H%M-%S")
     
@@ -249,7 +256,85 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader)
+            test_loss, results = test(server_model, test_loader, device)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
+            
+            ## save model
+            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
+    
+    elif args.algorithm == 'FedAvgM':
+        ## Set algorithm specific requirements
+        moment_v = copy.deepcopy(server_model.state_dict())
+        for key in moment_v:
+            moment_v[key] = 0
+            
+        for train_round in range(args.rounds):
+            print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
+            ## number of clients to pick
+            num_clients_to_pick = int(args.C * len(clients))
+            ## pick clients
+            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
+            selected_clients = [clients[client_index] for client_index in round_selected_clients]
+            
+            # if random_select_fract is not 1.0, select the clients randomly
+            if args.random_select_fract < 1.0:
+                # select index randomly
+                select_index = np.random.choice(len(selected_clients), int(args.random_select_fract*len(selected_clients)), replace=False)
+                selected_clients = [clients[client_index] for client_index in select_index]
+            
+            print(f'Training with {len(selected_clients)} clients...')
+            logger.info(f'Training with {len(selected_clients)} clients...')
+            
+            # old server weight
+            old_w = copy.deepcopy(server_model.state_dict())
+            
+            for train_clients in selected_clients:
+                ## get updated model from server
+                train_clients.model = copy.deepcopy(server_model)
+                # use multiple GPUs
+                train_clients.model = torch.nn.DataParallel(train_clients.model)
+                ## train clients
+                logger.info(f'Training client {train_clients.id}...')
+                train_clients.train(algorithm='FedAvg', opt=args.opt, lr=args.lr)
+            
+            ## Update server model
+            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
+            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+
+            global_w = server_model.state_dict()
+            for net_id, train_clients in enumerate(selected_clients):
+                try:
+                    net_para = train_clients.model.module.state_dict()
+                except AttributeError:
+                    net_para = train_clients.model.state_dict()
+                if net_id == 0:
+                    for key in net_para:
+                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+                else:
+                    for key in net_para:
+                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+            
+            # apply the momentum
+            if args.server_momentum:
+                delta_w = copy.deepcopy(global_w)
+                for key in delta_w:
+                    delta_w[key] = old_w[key] - global_w[key]
+                    moment_v[key] = args.server_momentum * moment_v[key] + (1-args.server_momentum) * delta_w[key]
+                    global_w[key] = old_w[key] - moment_v[key]
+                    
+            ## global model load new weights
+            server_model.load_state_dict(global_w)
+
+            ## test model
+            test_loss, results = test(server_model, test_loader, device)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -289,7 +374,11 @@ if __name__ == '__main__':
                 # change the selected clients
                 # get the order from highest to lowest from client accuracy record
                 client_id_highest = sorted(Client_accuracy_record, key=Client_accuracy_record.get, reverse=True)
+                print(f'Client accuracy record {Client_accuracy_record}')
+                logger.info(f'Client accuracy record {Client_accuracy_record}')
                 
+                print(f'Client id highest {client_id_highest}')
+                logger.info(f'Client id highest {client_id_highest}')
                 # check if the client with id in the list are on the selected client list
                 temp = []
                 list_of_current_round_id = [client.id for client in selected_clients]
@@ -299,8 +388,11 @@ if __name__ == '__main__':
                         loc_id = list_of_current_round_id.index(id)
                         temp.append(selected_clients[loc_id])
                     # if it is already full, break
-                    if len(temp) == maximum_length_add:
+                    if len(temp) >= maximum_length_add:
                         break
+                
+                print(f'Training with {len(selected_clients)} clients...')
+                logger.info(f'Training with {len(selected_clients)} clients...')
                         
                 # change temp to selected list
                 selected_clients = temp
@@ -316,7 +408,8 @@ if __name__ == '__main__':
                 train_clients.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
                 
                 # update the client accuracy on server evaluation data
-                Client_accuracy_record[train_clients.id] = test(train_clients.model, val_loader)
+                _, test_result = test(train_clients.model, val_loader, device)
+                Client_accuracy_record[train_clients.id] = test_result['acc']
             
             ## Update server model
             total_data_points = sum([len(train_clients)for train_clients in selected_clients])
@@ -339,7 +432,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader)
+            test_loss, results = test(server_model, test_loader, device)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -391,7 +484,7 @@ if __name__ == '__main__':
                 print(f"Client {client.id}: {client_summaries[client.id]} ")
                 logger.info(f"Client {client.id}: {client_summaries[client.id]} ")
             
-            prompt_selection = f"""You are a helpful assistant whose task is to select the clients that have similar context with the evaluator's context.
+            prompt_selection = f"""You are a helpful assistant whose task is to select the clients that are part of the evaluator's context.
             
             Please compare each client description in Data description with the Evaluator Description and provide the reasons.
             
@@ -450,7 +543,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader)
+            test_loss, results = test(server_model, test_loader, device)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -545,7 +638,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader)
+            test_loss, results = test(server_model, test_loader, device)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -638,7 +731,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader)
+            test_loss, results = test(server_model, test_loader, device)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -711,7 +804,7 @@ if __name__ == '__main__':
             server_model.load_state_dict(best_model.state_dict())
 
             ## test model
-            test_loss, results = test(server_model, test_loader)
+            test_loss, results = test(server_model, test_loader, device)
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
