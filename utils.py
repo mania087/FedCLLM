@@ -125,8 +125,10 @@ def compare_sentences_score(sentence1, sentence2, model):
     
 
 def train(net, 
-          trainloader: torch.utils.data.DataLoader, 
+          trainloader: torch.utils.data.DataLoader,
+          lr: float, 
           epochs: int,
+          opt: str,
           device: torch.device, 
           valloader: torch.utils.data.DataLoader = None,
           verbose=False) -> None:
@@ -134,7 +136,12 @@ def train(net,
     """Train the network."""
     # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam([p for p in net.parameters() if p.requires_grad], lr = 0.001) 
+    if opt == "adam":
+        optimizer = torch.optim.Adam([p for p in net.parameters() if p.requires_grad], lr = lr) 
+    elif opt == "sgd":
+        optimizer = torch.optim.SGD([p for p in net.parameters() if p.requires_grad], lr = lr, momentum=0.9)
+    elif opt == "rmsprop":
+        optimizer = torch.optim.RMSprop([p for p in net.parameters() if p.requires_grad], lr = lr)
     
     print(f"Training {epochs} epoch(s) w/ {len(trainloader)} batches each")
     start_time = time.time()

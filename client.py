@@ -62,37 +62,15 @@ class Client():
         """Return a total size of the client's local data."""
         return len(self.train_loader.sampler)
     
-    def train(self, algorithm, verbose=False):
+    def train(self, algorithm, lr, opt, verbose=False):
         results= {}
         if algorithm == "FedAvg":
             # FedAvg algorithm
             results = train(net=self.model, 
                             trainloader= self.train_loader, 
                             epochs= self.config["local_epoch"],
-                            device= self.device, 
-                            valloader= self.valid_loader,
-                            verbose=verbose)
-        elif algorithm == "Shapley":
-            # FedAvg algorithm
-            results = train(net=self.model, 
-                            trainloader= self.train_loader, 
-                            epochs= self.config["local_epoch"],
-                            device= self.device, 
-                            valloader= self.valid_loader,
-                            verbose=verbose)
-        elif algorithm == "Proposed":
-            # Proposed algorithm
-            results = train(net=self.model, 
-                            trainloader= self.train_loader, 
-                            epochs= self.config["local_epoch"],
-                            device= self.device, 
-                            valloader= self.valid_loader,
-                            verbose=verbose)
-        elif algorithm == "Cosine":
-            # FedAvg with cosine selection
-            results = train(net=self.model, 
-                            trainloader= self.train_loader, 
-                            epochs= self.config["local_epoch"],
+                            lr=lr,
+                            opt=opt,
                             device= self.device, 
                             valloader= self.valid_loader,
                             verbose=verbose)
