@@ -134,7 +134,7 @@ def train(net,
     """Train the network."""
     # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(net.parameters(), lr = 0.01)
+    optimizer = torch.optim.Adam([p for p in net.parameters() if p.requires_grad], lr = 0.001) 
     
     print(f"Training {epochs} epoch(s) w/ {len(trainloader)} batches each")
     start_time = time.time()

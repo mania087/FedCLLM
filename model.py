@@ -155,6 +155,19 @@ class ResNet(nn.Module):
         out = self.linear(out)
         return out
 
+class FineTunedModel(nn.Module):
+    def __init__(self, base_model, num_class):
+        super(FineTunedModel, self).__init__()
+        self.base_model = base_model
+        
+        self.base_model.classifier[1] = nn.Linear(self.base_model.last_channel, 256)
+        self.classifier = nn.Linear(256, num_class)
+        
+    def forward(self, x):
+        x = self.base_model(x)
+        x = F.relu(x)
+        x = self.classifier(x)
+        return x
 
 def ResNet18(num_class):
     return ResNet(BasicBlock, [2, 2, 2, 2], num_class)

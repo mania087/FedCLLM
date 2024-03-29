@@ -109,6 +109,41 @@ def create_datasets(data_path,
             transform = test_preprocess
         )
 
+    elif dataset_name == "EMNIST":
+        mean = (0.5, 0.5, 0.5)
+        std = (0.5, 0.5, 0.5)
+        from_list_link = False
+        preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        
+        test_preprocess = torchvision.transforms.Compose(
+                [torchvision.transforms.Resize(IMG_RESIZE), 
+                 torchvision.transforms.ToTensor(),
+                 To3dFrom1D(),
+                 torchvision.transforms.Normalize(mean, std),
+                ]
+            )
+        training_dataset = torchvision.datasets.EMNIST(
+            root=data_path,
+            train=True,
+            download=True,
+            split='byclass',
+            transform = None
+        )
+        # for torch native dataset, there is no 1d-to 3d so create manually
+        test_dataset = torchvision.datasets.EMNIST(
+            root=data_path,
+            train=False,
+            download=True,
+            split='byclass',
+            transform = test_preprocess
+        )
+
+        
     elif dataset_name == "MNIST":
         # check if transform is defined:
         mean = (0.5, 0.5, 0.5)
@@ -127,6 +162,7 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
+                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -137,6 +173,7 @@ def create_datasets(data_path,
             download=True,
             transform = None
         )
+        # for torch native dataset, there is no 1d-to 3d so create manually
         test_dataset = torchvision.datasets.MNIST(
             root=data_path,
             train=False,
@@ -162,6 +199,7 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
+                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -518,7 +556,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "FMNIST"
+    dataset_name = "EMNIST"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
