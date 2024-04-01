@@ -60,15 +60,24 @@ def get_api_key(txt_file):
         contents = f.read()
     return contents
 
-def get_completion(prompt, model="gpt-3.5-turbo"):
+def get_completion(prompt, model="gpt-3.5-turbo", retry=10, waiting_time=1.0):
     messages = [{"role": "user", "content": prompt}]
-    response = openai.ChatCompletion.create(
-        model=model,
-        messages=messages,
-        temperature=0.2, # this is the degree of randomness of the model's output
-        top_p= 0.1
-    )
-    return response.choices[0].message["content"]
+    for i in range(retry):
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=messages,
+                temperature=0.2, # this is the degree of randomness of the model's output
+                top_p= 0.1
+            )
+            response_answer = response.choices[0].message["content"]
+        except openai.APIError as e:
+            print(f"Error: {e}")
+            response_answer = e
+            time.sleep(waiting_time*i) # give longer waiting time in case of time out
+        else:
+            break
+    return response_answer
 
 def get_data_description(data, num_sample, model, feature_extractor, tokenizer, resize=224):
     """ get data description for num_sample using the language model """

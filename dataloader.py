@@ -123,7 +123,6 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -162,7 +161,6 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -199,7 +197,6 @@ def create_datasets(data_path,
         test_preprocess = torchvision.transforms.Compose(
                 [torchvision.transforms.Resize(IMG_RESIZE), 
                  torchvision.transforms.ToTensor(),
-                 To3dFrom1D(),
                  torchvision.transforms.Normalize(mean, std),
                 ]
             )
@@ -444,6 +441,10 @@ def create_datasets(data_path,
     
     if "ndarray" not in str(type(training_dataset.targets)):
         training_dataset.targets = np.asarray(training_dataset.targets,dtype=np.int64)  
+    
+    if training_dataset.data.ndim ==3: # make it batch (NxWxH => NxWxHx1)
+        training_dataset.data= np.expand_dims(training_dataset.data, axis=3)
+        test_dataset.data = np.expand_dims(test_dataset.data, axis=3)
         
     # create validation dataset
     if separate_validation_data and dataset_name !='TinyImagenet' and dataset_name !='Oxford102':
@@ -460,10 +461,7 @@ def create_datasets(data_path,
 
         training_dataset = CustomDataset(new_train_dataset[0], new_train_dataset[1], transforms = preprocess, from_list_link=from_list_link)
         val_dataset = CustomDataset(validation_dataset[0], validation_dataset[1], transforms = test_preprocess, from_list_link=from_list_link)
-    
-    if training_dataset.data.ndim ==3: # make it batch (NxWxH => NxWxHx1)
-        training_dataset.data= np.expand_dims(training_dataset.data, axis=3)
-        
+            
     # unique labels
     category = np.unique(training_dataset.targets)
     num_categories = np.unique(training_dataset.targets).shape[0]
@@ -556,7 +554,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "EMNIST"
+    dataset_name = "MNIST"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
