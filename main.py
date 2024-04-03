@@ -45,7 +45,7 @@ def get_args():
     parser.add_argument('--malicious_dataset', type=str, required=False, default='TinyImagenet', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10, Cub2011, Oxford102')
     parser.add_argument('--logdir', type=str, required=False, default="./logs/", help='Log directory path')
     parser.add_argument('--modeldir', type=str, required=False, default="./models/", help='Model directory path')
-    parser.add_argument('--algorithm', type=str, default='Proposed', help='Available algorithm: FedAvg, Proposed, ACS, Shapley')
+    parser.add_argument('--algorithm', type=str, default='Proposed', help='Available algorithm: FedAvg, Proposed, ACS, Shapley, FedCS, FedLim')
     parser.add_argument('--num_clients', type=int, default=15, help='Number of clients to simulate')
     parser.add_argument('--num_malicious_clients', type=int, default=5, help='Number of malicious clients to simulate')
     parser.add_argument('--local_epoch', type=int, default=1, help='Number of local epoch for each round')
@@ -62,6 +62,7 @@ def get_args():
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate for the model')
     parser.add_argument('--opt', type=str, default='adam', help='optimizer for the model: sgd, adam, rmsprop')
     parser.add_argument('--word_summary_max', type=int, default=15, help='maximum number of words for summary, CURRENTLY FOR SERVER')
+    parser.add_argument('--t_round', type=float, default=60, help='FedCS parameter: threshold time for the round')
     args = parser.parse_args()
     return args
 
@@ -200,6 +201,36 @@ if __name__ == '__main__':
         "loss": []
     }
     
+    # count the model size in mb
+    param_size = 0
+    for param in server_model.parameters():
+        param_size += param.nelement() * param.element_size()
+        
+    buffer_size = 0
+    for buffer in server_model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+        
+    size_all_mb = (param_size + buffer_size) / 1024**2
+    
+    ##### For FedCs requirement ###########
+    if args.algorithm == 'FedCS':
+        ## populate the time to update and upload time first for all clients (FOR INFORMATION)
+        for client in clients:
+            ## get updated model from server
+            client.model = copy.deepcopy(server_model)
+            # use multiple GPUs
+            client.model = torch.nn.DataParallel(client.model)
+            ## train clients to populate update time
+            logger.info(f'Populating time for {client.id}...')
+            client.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
+            
+            # simulate sending to server
+            #dummy_time = time.time()
+            #dummy = copy.deepcopy(client.model)
+            #client.time_upload = time.time()-dummy_time
+            
+    #######################################
+    
     ## count the time execution
     start_time = time.time()
     
@@ -269,6 +300,208 @@ if __name__ == '__main__':
             ## save model
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
     
+    elif args.algorithm== "FedLim":
+        ## use the t_round as deadline for the round
+        
+        for train_round in range(args.rounds):
+            print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
+            ## number of clients to pick
+            num_clients_to_pick = int(args.C * len(clients))
+            ## pick clients
+            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
+            selected_clients = [clients[client_index] for client_index in round_selected_clients]
+            
+            start_time_round = time.time()
+            elapsed_time = 0.0
+            index=0
+            trained_clients = []
+            
+            ## simulate upload time
+            # use assumption from fedcs paper
+            # mean trans = 1.4, sigma = 1.6
+            # NOTE: but if we want to use real time machine , don't use the simulation time
+            for client in selected_clients:
+                upload_time = -1.0
+                while upload_time < 0.0:
+                    delta_k = random.gauss(1.4, 1.6)
+                    upload_time = size_all_mb/delta_k
+                client.time_upload = upload_time
+                print(f'Client {client.id} time upload: {client.time_upload}')
+                logger.info(f'Client {client.id} time upload: {client.time_upload}')
+                
+            while (elapsed_time < args.t_round) and (index<len(selected_clients)):
+                
+                current_client = selected_clients[index]
+                ## get updated model from server
+                current_client.model = copy.deepcopy(server_model)
+                # use multiple GPUs
+                current_client.model = torch.nn.DataParallel(current_client.model)
+                ## train clients
+                logger.info(f'Training client {current_client.id}...')
+                current_client.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
+                
+                # update index
+                trained_clients.append(current_client)
+                index += 1
+                elapsed_time += time.time() + current_client.time_upload - start_time_round
+                print(f'Elapsed time: {elapsed_time}...')
+                logger.info(f'Elapsed time: {elapsed_time}...')
+            
+            ## Update server model
+            total_data_points = sum([len(train_clients)for train_clients in trained_clients])
+            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in trained_clients]
+
+            global_w = server_model.state_dict()
+            for net_id, train_clients in enumerate(trained_clients):
+                try:
+                    net_para = train_clients.model.module.state_dict()
+                except AttributeError:
+                    net_para = train_clients.model.state_dict()
+                if net_id == 0:
+                    for key in net_para:
+                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+                else:
+                    for key in net_para:
+                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+            
+            ## global model load new weights
+            server_model.load_state_dict(global_w)
+
+            ## test model
+            test_loss, results = test(server_model, test_loader, device)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
+            
+            ## save model
+            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
+        
+    elif args.algorithm == "FedCS":
+        ## Set algorithm specific requirements
+        time_client_selection = 0.0
+        time_aggregation = 0.0
+        
+        for train_round in range(args.rounds):
+            print(f'Round {train_round}...')
+            logger.info(f'Round {train_round}...')
+            ## number of clients to pick
+            num_clients_to_pick = int(args.C * len(clients))
+            ## pick clients
+            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
+            available_clients = [clients[client_index] for client_index in round_selected_clients]
+            
+            ## simulate upload time
+            # use assumption from fedcs paper
+            # mean trans = 1.4, sigma = 1.6
+            # NOTE: but if we want to use real time machine , don't use the simulation time
+            for client in available_clients:
+                upload_time = -1.0
+                while upload_time < 0.0:
+                    delta_k = random.gauss(1.4, 1.6)
+                    upload_time = size_all_mb/delta_k
+                client.time_upload = upload_time
+                print(f'Client {client.id} time upload: {client.time_upload}')
+                logger.info(f'Client {client.id} time upload: {client.time_upload}')
+            
+            ## client_selection
+            elapsed_time = 0.0
+            selected_clients = []
+            ## start the client selection time
+            client_selection_start_time = time.time()
+            while len(available_clients) !=0:
+                # to select the k
+                x_list = []
+                for client in available_clients:
+                    max_update_time = max(0, client.time_update - elapsed_time)
+                    if len(selected_clients) <= 0:
+                        t_d_s = 0.0
+                    else:
+                        # t_d_s is client with longest update time
+                        t_d_s = max([client.time_upload for client in selected_clients])
+                    temp_list = selected_clients + [client]
+                    t_d_sk = max([client.time_upload for client in temp_list])
+                    
+                    x_list.append(1/(t_d_sk - t_d_s + client.time_upload + max_update_time))
+                
+                ## find index with maximum in x_list
+                max_index = np.argmax(x_list)
+                ## remove it from available client
+                current_client = available_clients.pop(max_index)
+                ## update temp elapsed_time
+                temp_elapsed_time = elapsed_time + current_client.time_upload + max(0, current_client.time_update - elapsed_time)
+                ## calculate t
+                temp_list = selected_clients + [current_client]
+                t_d_s_with_x = max([client.time_upload for client in temp_list])
+                
+                t_count = time_client_selection+ t_d_s_with_x + temp_elapsed_time + time_aggregation
+                print(f'Client {current_client.id} t_count: {t_count}')
+                logger.info(f'Client {current_client.id} t_count: {t_count}')
+                
+                # if t_count is smaller than t_round then add to selected_clients
+                if t_count < args.t_round:
+                    selected_clients.append(current_client)
+                    elapsed_time = temp_elapsed_time
+        
+            ## update the time_client_selection
+            time_client_selection = time.time() - client_selection_start_time
+            
+            print(f'Training with {len(selected_clients)} clients...')
+            logger.info(f'Training with {len(selected_clients)} clients...')
+
+            for train_clients in selected_clients:
+                ## get updated model from server
+                train_clients.model = copy.deepcopy(server_model)
+                # use multiple GPUs
+                train_clients.model = torch.nn.DataParallel(train_clients.model)
+                ## train clients
+                logger.info(f'Training client {train_clients.id}...')
+                train_clients.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
+            
+            ## Update server model
+            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
+            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+
+            global_w = server_model.state_dict()
+            ## update aggregation time
+            aggregation_start_time = time.time()
+            for net_id, train_clients in enumerate(selected_clients):
+                try:
+                    net_para = train_clients.model.module.state_dict()
+                except AttributeError:
+                    net_para = train_clients.model.state_dict()
+                if net_id == 0:
+                    for key in net_para:
+                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+                else:
+                    for key in net_para:
+                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+            
+            time_aggregation = time.time() - aggregation_start_time
+            
+            ## global model load new weights
+            server_model.load_state_dict(global_w)
+
+            ## test model
+            test_loss, results = test(server_model, test_loader, device)
+            print(f"loss:{test_loss.item()}, metrics:{results}")
+            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
+            ## metrics saved
+            metrics["loss"].append(test_loss.item())
+            metrics["acc"].append(results["acc"])
+            metrics["rec"].append(results["rec"])
+            metrics["f1"].append(results["f1"])
+            metrics["prec"].append(results["prec"])
+            
+            ## save model
+            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
+                
+        
     elif args.algorithm == 'FedAvgM':
         ## Set algorithm specific requirements
         moment_v = copy.deepcopy(server_model.state_dict())
@@ -484,7 +717,7 @@ if __name__ == '__main__':
                 print(f"Client {client.id}: {client_summaries[client.id]} ")
                 logger.info(f"Client {client.id}: {client_summaries[client.id]} ")
             
-            prompt_selection = f"""You are a helpful assistant whose task is to select the clients that are part of the evaluator's context.
+            prompt_selection = f"""You are a helpful assistant whose task is to select the clients which description are part of the evaluator's description.
             
             Please compare each client description in Data description with the Evaluator Description and provide the reasons.
             

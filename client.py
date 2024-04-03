@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-
+import time
 from torch.utils.data.sampler import SubsetRandomSampler
 from utils import train, test
 
@@ -20,6 +20,10 @@ class Client():
             self.device = 'cpu'
         else:
             self.device = 'cuda'
+        
+        # for fedcs
+        self.time_update = 0.0
+        self.time_upload = 0.0
 
         self.train_dataset = self.config["train_data"]
         
@@ -64,6 +68,7 @@ class Client():
     
     def train(self, algorithm, lr, opt, verbose=False):
         results= {}
+        start_time = time.time()
         if algorithm == "FedAvg":
             # FedAvg algorithm
             results = train(net=self.model, 
@@ -77,6 +82,8 @@ class Client():
         else:
             # other algorithm
             pass
+        # update time for fedcs
+        self.time_update = time.time() - start_time
         
         if verbose:
             print(f"Train result client {self.id}: {results}")

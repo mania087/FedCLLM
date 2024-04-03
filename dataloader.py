@@ -445,6 +445,11 @@ def create_datasets(data_path,
     if training_dataset.data.ndim ==3: # make it batch (NxWxH => NxWxHx1)
         training_dataset.data= np.expand_dims(training_dataset.data, axis=3)
         test_dataset.data = np.expand_dims(test_dataset.data, axis=3)
+    
+    # NOTE: until there is a better way
+    # native pytorch dataset use img = Image.fromarray(img.numpy(), mode="L")
+    # we can't use that since it's already on numpy
+    test_dataset= CustomDataset(test_dataset.data, test_dataset.targets, transforms = test_preprocess, from_list_link=from_list_link)
         
     # create validation dataset
     if separate_validation_data and dataset_name !='TinyImagenet' and dataset_name !='Oxford102':
@@ -567,7 +572,7 @@ if __name__ == '__main__':
     
     print(len(val_dataset))
     sample_index = 1
-    ex_dataset = local_datasets[0]
+    ex_dataset = test_dataset
     # output raw
     ex_dataset.return_raw = True
     sample_image = ex_dataset[sample_index][0]
