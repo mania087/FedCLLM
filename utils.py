@@ -12,6 +12,7 @@ from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_sc
 
 from nltk.tokenize import word_tokenize
 from gensim.models import Word2Vec
+from sklearn.metrics import confusion_matrix
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -215,7 +216,7 @@ def train(net,
     return results
 
 
-def test(net, testloader, device: str = "cpu"):
+def test(net, testloader, device: str = "cpu",  get_confusion_matrix=False):
     """Validate the network on the entire test set."""
     criterion = nn.CrossEntropyLoss()
     loss = 0.0
@@ -249,6 +250,9 @@ def test(net, testloader, device: str = "cpu"):
     recall = recall_score(y_true, y_pred, average='macro')
     # calculate F1-score
     f1 = f1_score(y_true, y_pred, average='macro')
+    
+    # confusion matrix
+    conf_matrix = confusion_matrix(y_true, y_pred)
 
     results = {
         "acc":acc,
@@ -256,5 +260,7 @@ def test(net, testloader, device: str = "cpu"):
         "rec":recall,
         "f1":f1,
     }
-    
-    return loss, results
+    if get_confusion_matrix:
+        return loss, results, conf_matrix
+    else:
+        return loss, results

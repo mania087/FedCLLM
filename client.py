@@ -91,6 +91,7 @@ class Client():
     def test(self):
         loss,acc = test(net = self.model, 
                         testloader = self.valid_loader,
+                        get_confusion_matrix=False,
                         device=self.device)
         print(f"Test result client {self.id}: {loss, acc}")
         

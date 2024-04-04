@@ -12,8 +12,13 @@ import gensim.downloader
 import argparse
 import torchvision.models as models
 import time
+import matplotlib.pyplot as plt 
+import seaborn as sns
 
+from torch import nn
+from sklearn.manifold import TSNE
 from dataloader import create_datasets
+from sklearn.metrics import ConfusionMatrixDisplay
 from client import Client
 from model import CnnModel, ResNet50, FineTunedModel, ResNet18
 from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key, mkdirs, compare_sentences_score, get_model_combination
@@ -25,6 +30,48 @@ openai.api_key  = get_api_key('backup/gpt_key.txt')
 np.random.seed(seed=42)
 torch.manual_seed(0)
 
+def plot_tsne(original_model, viz_loader, device, activity_names, title):
+    # extract feature layer
+    # NOTE: this is for ResNet
+    model = nn.Sequential(*list(original_model.children())[:-2])
+    # send global model to device
+    model.to(device)
+    list_of_embeddings = []
+    list_of_labels = []
+    # get model embeddings
+    for data, target in viz_loader:
+        data, target = data.float().to(device), target.long().to(device)
+        embeddings = model(data)
+        # flatten the embeddings
+        embeddings = torch.flatten(embeddings, start_dim=1)
+        list_of_embeddings.append(embeddings.cpu().detach().numpy())
+        list_of_labels.append(target.cpu().detach().numpy())
+    
+    # concatenate all embeddings
+    list_of_embeddings = np.concatenate(list_of_embeddings)
+    list_of_labels = np.concatenate(list_of_labels)
+    
+    tsne_model = TSNE(perplexity=30.0, verbose=1, random_state=42)
+    tsne_projections = tsne_model.fit_transform(list_of_embeddings)
+    
+    plt.figure(figsize=(12,8))
+    graph = sns.scatterplot(
+        x=tsne_projections[:,0], 
+        y=tsne_projections[:,1],
+        hue=list_of_labels,
+        palette=sns.color_palette("tab10", len(activity_names)),
+        s=50,
+        alpha=1.0,
+        rasterized=True
+        )
+    plt.xticks([], [])
+    plt.yticks([], [])
+    
+    plt.savefig(title, bbox_inches='tight')
+    
+    # move global model back to cpu
+    model.to("cpu")
+    
 # do the first prompt to make content summary
 def make_prompt_summary(description, word_summary_max=15):
     prompt_1 = f"""You are a helpful assistant whose task is to figure what is the theme from a list of descriptions.
@@ -287,7 +334,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -369,7 +429,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -488,7 +561,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -567,7 +653,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -665,7 +764,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -776,7 +888,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -871,7 +996,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -964,7 +1102,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(global_w)
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+                
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -1037,7 +1188,20 @@ if __name__ == '__main__':
             server_model.load_state_dict(best_model.state_dict())
 
             ## test model
-            test_loss, results = test(server_model, test_loader, device)
+            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
+            
+            # create confusion matrix figure for every 10 epochs
+            if train_round % 10 == 0:
+                # fig title
+                # plot embeddings
+                labels = [x for x in range(category.shape[0])]
+                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
+                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
+                
+                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
+                
+                plot_tsne(server_model, test_loader, device, labels, fig_title)
+            
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
