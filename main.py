@@ -100,7 +100,7 @@ def get_args():
     parser.add_argument('--rounds', type=int, default=100, help='Number of rounds for FL training')
     parser.add_argument('--C', type=float, default=1.0, help='Percentage of clients available for each round')
     parser.add_argument('--sim_threshold', type=float, default=0.5, help='Threshold for cosine similarity method')
-    parser.add_argument('--iid', type=bool, default=True, help='Set data split to IID or non-IID')
+    parser.add_argument('--iid', action='store_true', help='Set data split to IID or non-IID')
     parser.add_argument('--fraction_rank', type=float, default=0.5, help='ACS parameter: Fraction of clients with highest accuracy')
     parser.add_argument('--num_description_sample', type=int, default=10, help='number of data descriptions to sample from each client')
     parser.add_argument('--server_num_description', type=int, default=10, help='number of data descriptions to sample from the server')
@@ -110,6 +110,8 @@ def get_args():
     parser.add_argument('--opt', type=str, default='adam', help='optimizer for the model: sgd, adam, rmsprop')
     parser.add_argument('--word_summary_max', type=int, default=15, help='maximum number of words for summary, CURRENTLY FOR SERVER')
     parser.add_argument('--t_round', type=float, default=60, help='FedCS parameter: threshold time for the round')
+    parser.add_argument('--non_iid_mode', type=str, default='dirichlet', help='mode for non-iid: dirichlet, shard')
+    parser.add_argument('--dirichlet_alpha', type=float, default=10, help='alpha parameter for dirichlet distribution')
     args = parser.parse_args()
     return args
 
@@ -158,7 +160,9 @@ if __name__ == '__main__':
                                                                 dataset_name=args.dataset, 
                                                                 num_clients=honest_client_numbers, 
                                                                 num_shards=200, 
-                                                                iid=args.iid, 
+                                                                iid=args.iid,
+                                                                non_iid_mode=args.non_iid_mode,
+                                                                dir_alpha=args.dirichlet_alpha, 
                                                                 transform=None, 
                                                                 print_count=True)
     
@@ -168,7 +172,7 @@ if __name__ == '__main__':
                                                   num_clients=args.num_malicious_clients, 
                                                   num_shards=200, 
                                                   separate_validation_data=False,
-                                                  iid=args.iid, 
+                                                  iid=True, 
                                                   transform=None, 
                                                   print_count=True)
 

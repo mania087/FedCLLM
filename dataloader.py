@@ -71,7 +71,7 @@ def create_datasets(data_path,
                     num_clients=100, 
                     separate_validation_data=True,
                     val_size=0.2,
-                    num_shards=200, iid=True, transform=None, print_count=None):
+                    num_shards=200, iid=True, non_iid_mode='shard', dir_alpha=10, transform=None, print_count=None):
     
     val_dataset = None
     
@@ -364,13 +364,36 @@ def create_datasets(data_path,
             transforms=preprocess,
             from_list_link=from_list_link
         )
+        
         val_dataset = torchvision.datasets.ImageFolder(
             root=data_path+'/tiny-imagenet-200/val/',
             transform = test_preprocess
         )
+        # create .data and .targets for the dataset
+        val_data = [x[0] for x in val_dataset.imgs]
+        val_targets = [x[1] for x in val_dataset.imgs]
+        
+        val_dataset = CustomDataset(
+            val_data,
+            val_targets,
+            transforms=test_preprocess,
+            from_list_link=from_list_link
+        )
+        
         test_dataset = torchvision.datasets.ImageFolder(
             root=data_path+'/tiny-imagenet-200/test/',
             transform = test_preprocess
+        )
+                
+        # create .data and .targets for the dataset
+        test_data = [x[0] for x in test_dataset.imgs]
+        test_targets = [x[1] for x in test_dataset.imgs]
+        
+        test_dataset = CustomDataset(
+            test_data,
+            test_targets,
+            transforms=test_preprocess,
+            from_list_link=from_list_link
         )
         
     # food 101 dataset
@@ -501,9 +524,46 @@ def create_datasets(data_path,
                               transforms = preprocess,
                               from_list_link=from_list_link)
                 )
-    # TODO: change to numpy based since there is some dataset that does not load into image directly
-    # due to size limitation
-    else:
+    elif not iid and non_iid_mode == 'dirichlet':
+        # Non-IID split
+        # first, sort data by labels
+        sorting_idx = np.argsort(training_dataset.targets)
+        training_inputs = training_dataset.data[sorting_idx]
+        training_labels = training_dataset.targets[sorting_idx]
+
+        # get the list of index related to each label
+        partition_info = []
+        clients_shard= [[] for _ in range(num_clients)]
+        for label in category:
+            indexes_location = np.where(training_labels == label)[0]
+            # shuffle the indexes
+            np.random.shuffle(indexes_location)
+            # get the dirilecht partition of number of data
+            dir_partition = np.random.multinomial(len(indexes_location), np.random.dirichlet(np.ones(num_clients) * dir_alpha)) 
+            partition_info.append(dir_partition)
+            splitted_index = np.array_split(indexes_location, np.cumsum(dir_partition))[:-1]
+
+            # append the data into clients_shard
+            for i, split in enumerate(splitted_index):
+                clients_shard[i].extend(split)
+        print(clients_shard)
+        partition_info = np.transpose(np.vstack(partition_info))
+        if print_count:
+            print(partition_info)
+        
+        # assign the shard to the clients
+        local_datasets = []
+        for i, shard in enumerate(clients_shard):
+            local_datasets.append(
+                CustomDataset(
+                    training_inputs[shard],
+                    training_labels[shard],
+                    transforms = preprocess,
+                    from_list_link=from_list_link
+                )
+            )
+            
+    elif not iid and non_iid_mode == 'shard':
         # Non-IID split
         # first, sort data by labels
         sorting_idx = np.argsort(training_dataset.targets)
@@ -559,7 +619,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "MNIST"
+    dataset_name = "CIFAR10"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
@@ -568,11 +628,11 @@ if __name__ == '__main__':
     local_datasets, test_dataset, val_dataset, _ = create_datasets(data_path, 
                                                                    dataset_name, 
                                                                    num_clients=10, 
-                                                                   num_shards=200, iid=True, transform=None, print_count=True)
-    
+                                                                   num_shards=200, iid=False, transform=None, non_iid_mode='dirichlet', dir_alpha=100000000.0, print_count=True)
+    print(_)
     print(len(val_dataset))
-    sample_index = 1
-    ex_dataset = test_dataset
+    sample_index = 1000
+    ex_dataset = local_datasets[0]
     # output raw
     ex_dataset.return_raw = True
     sample_image = ex_dataset[sample_index][0]

@@ -42,14 +42,17 @@ class Client():
             # prepare data loaders (combine dataset and sampler)
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
                                                             batch_size=self.config["batch_size"],
+                                                            shuffle=True,
                                                             sampler=train_sampler,
                                                             drop_last=True)
             self.valid_loader = torch.utils.data.DataLoader(self.config["train_data"],
                                                             batch_size=self.config["batch_size"],
+                                                            shuffle=True,
                                                             sampler=valid_sampler) 
             
         else:
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
+                                                            shuffle=True,
                                                             batch_size=self.config["batch_size"])
             self.valid_loader = None
             
