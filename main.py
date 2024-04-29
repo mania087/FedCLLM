@@ -112,6 +112,10 @@ def get_args():
     parser.add_argument('--t_round', type=float, default=60, help='FedCS parameter: threshold time for the round')
     parser.add_argument('--non_iid_mode', type=str, default='dirichlet', help='mode for non-iid: dirichlet, shard')
     parser.add_argument('--dirichlet_alpha', type=float, default=10, help='alpha parameter for dirichlet distribution')
+    parser.add_argument('--top_p', type=float, default=0.1, help='subset of token to consider for LLM: client selection step')
+    parser.add_argument('--temperature', type=float, default=0.2, help='control the randomness of LLM: client selection step')
+    parser.add_argument('--summarization_top_p', type=float, default=0.1, help='subset of token to consider for LLM: summarization')
+    parser.add_argument('--summarization_temperature', type=float, default=0.2, help='control the randomness of LLM: summarization')
     args = parser.parse_args()
     return args
 
@@ -808,7 +812,11 @@ if __name__ == '__main__':
             # evaluator description
             evaluator_description = get_data_description(val_dataset, args.server_num_description, img_text_model, feature_extractor, tokenizer)
             prompt_survey = make_prompt_summary(evaluator_description, args.word_summary_max)
-            evaluator_survey = get_completion(prompt_survey)
+            
+            print(f'Server Description: {evaluator_description}')
+            logger.info(f'Server Description: {evaluator_description}')
+            
+            evaluator_survey = get_completion(prompt_survey, top_p=args.summarization_top_p, temperature=args.summarization_temperature)
             
             print(f'Round {train_round}...')
             logger.info(f'Round {train_round}...')
@@ -826,8 +834,11 @@ if __name__ == '__main__':
             for index, client in enumerate(available_clients):
                 description = get_data_description(client.train_dataset , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
                 
+                print(f'Client {client.id}: {description}...')
+                logger.info(f'Client {client.id}: {description}...')
+                
                 prompt_client = make_prompt_summary(description)
-                client_summaries[client.id] = get_completion(prompt_client)
+                client_summaries[client.id] = get_completion(prompt_client, top_p=args.summarization_top_p, temperature=args.summarization_temperature)
                 overall_description += f"Client {client.id}: {client_summaries[client.id]}\n"
                 
                 print(f"Client {client.id}: {client_summaries[client.id]} ")
@@ -848,7 +859,7 @@ if __name__ == '__main__':
             print(prompt_selection)
             logger.info(prompt_selection)
             
-            prompt_answer = get_completion(prompt_selection)
+            prompt_answer = get_completion(prompt_selection, top_p=args.top_p, temperature=args.temperature)
             
             # the prompt answer
             print(prompt_answer)
@@ -959,7 +970,7 @@ if __name__ == '__main__':
             If there are no clients with similar context, return it as an empty list.
             """
             
-            response = get_completion(prompt)
+            response = get_completion(prompt, top_p=args.top_p, temperature=args.temperature)
             print(prompt)
             print(f'Response from GPT: \n{response}')
             logger.info(f'Response from GPT, selected clients: {response}...')

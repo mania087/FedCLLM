@@ -61,15 +61,15 @@ def get_api_key(txt_file):
         contents = f.read()
     return contents
 
-def get_completion(prompt, model="gpt-3.5-turbo", retry=10, waiting_time=1.0):
+def get_completion(prompt, model="gpt-3.5-turbo", temperature=0.2, top_p=0.1,retry=10, waiting_time=1.0):
     messages = [{"role": "user", "content": prompt}]
     for i in range(retry):
         try:
             response = openai.ChatCompletion.create(
                 model=model,
                 messages=messages,
-                temperature=0.2, # this is the degree of randomness of the model's output
-                top_p= 0.1
+                temperature=temperature, # this is the degree of randomness of the model's output
+                top_p= top_p
             )
             response_answer = response.choices[0].message["content"]
         except openai.APIError as e:
