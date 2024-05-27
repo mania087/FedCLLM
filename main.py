@@ -253,7 +253,8 @@ if __name__ == '__main__':
         "acc": [],
         "rec": [],
         "prec": [],
-        "loss": []
+        "loss": [],
+        "honest_client_percentage": [],
     }
     
     # count the model size in mb
@@ -815,7 +816,6 @@ if __name__ == '__main__':
             
             print(f'Server Description: {evaluator_description}')
             logger.info(f'Server Description: {evaluator_description}')
-            
             evaluator_survey = get_completion(prompt_survey, top_p=args.summarization_top_p, temperature=args.summarization_temperature)
             
             print(f'Round {train_round}...')
@@ -826,6 +826,7 @@ if __name__ == '__main__':
             ## list clients
             round_available_index = np.random.choice(len(clients), num_clients_to_pick, replace=False)
             available_clients = [clients[client_index] for client_index in round_available_index]
+            id_of_honest_clients_available = [client.id for client in available_clients if not client.is_malicious]
             
             # for each listed available clients sample num_sample of their data and get it's description by language model
             # and then perform prompt 1
@@ -916,7 +917,8 @@ if __name__ == '__main__':
                 fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
                 
                 plot_tsne(server_model, test_loader, device, labels, fig_title)
-                
+            
+            number_of_selected_honest_client = len([client for client in selected_clients if not client.is_malicious])
             print(f"loss:{test_loss.item()}, metrics:{results}")
             logger.info(f"loss:{test_loss.item()}, metrics:{results}")
             ## metrics saved
@@ -925,6 +927,7 @@ if __name__ == '__main__':
             metrics["rec"].append(results["rec"])
             metrics["f1"].append(results["f1"])
             metrics["prec"].append(results["prec"])
+            metrics["honest_client_percentage"].append(number_of_selected_honest_client/len(id_of_honest_clients_available))
             
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
             

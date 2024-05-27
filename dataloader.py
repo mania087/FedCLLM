@@ -354,9 +354,49 @@ def create_datasets(data_path,
             root=data_path+'/tiny-imagenet-200/train/',
             transform = preprocess
         )
+        
+        val_dataset = torchvision.datasets.ImageFolder(
+            root=data_path+'/tiny-imagenet-200/val/',
+            transform = test_preprocess
+        )
+        
+        test_dataset = torchvision.datasets.ImageFolder(
+            root=data_path+'/tiny-imagenet-200/test/',
+            transform = test_preprocess
+        )
+        
+        # NOTE: for temporary, take only 100 classes of imagenet for category compability
+        all_classes = list(range(0,200))
+        random.shuffle(all_classes)
+        
+        allowed_classes = all_classes[:100]
+        dictionary_remap = {class_name:index for index,class_name in enumerate(allowed_classes)}    
+                
         # create .data and .targets for the dataset
         training_data = [x[0] for x in training_dataset.imgs]
         training_targets = [x[1] for x in training_dataset.imgs]
+        
+        val_data = [x[0] for x in val_dataset.imgs]
+        val_targets = [x[1] for x in val_dataset.imgs]
+        
+        test_data = [x[0] for x in test_dataset.imgs]
+        test_targets = [x[1] for x in test_dataset.imgs]
+        
+        # allow data within the allowed classes
+        ## search indexes first
+        training_indexes = [i for i, x in enumerate(training_targets) if x in allowed_classes]
+        val_indexes = [i for i, x in enumerate(val_targets) if x in allowed_classes]
+        test_indexes = [i for i, x in enumerate(test_targets) if x in allowed_classes]
+        
+        ## get the data based on indexes and rename
+        training_data = [training_data[i] for i in training_indexes]
+        training_targets = [dictionary_remap[training_targets[i]] for i in training_indexes]
+        
+        val_data = [val_data[i] for i in val_indexes]   
+        val_targets = [dictionary_remap[val_targets[i]] for i in val_indexes]
+        
+        test_data = [test_data[i] for i in test_indexes]
+        test_targets = [dictionary_remap[test_targets[i]] for i in test_indexes]
         
         training_dataset = CustomDataset(
             training_data,
@@ -365,29 +405,12 @@ def create_datasets(data_path,
             from_list_link=from_list_link
         )
         
-        val_dataset = torchvision.datasets.ImageFolder(
-            root=data_path+'/tiny-imagenet-200/val/',
-            transform = test_preprocess
-        )
-        # create .data and .targets for the dataset
-        val_data = [x[0] for x in val_dataset.imgs]
-        val_targets = [x[1] for x in val_dataset.imgs]
-        
         val_dataset = CustomDataset(
             val_data,
             val_targets,
             transforms=test_preprocess,
             from_list_link=from_list_link
         )
-        
-        test_dataset = torchvision.datasets.ImageFolder(
-            root=data_path+'/tiny-imagenet-200/test/',
-            transform = test_preprocess
-        )
-                
-        # create .data and .targets for the dataset
-        test_data = [x[0] for x in test_dataset.imgs]
-        test_targets = [x[1] for x in test_dataset.imgs]
         
         test_dataset = CustomDataset(
             test_data,
@@ -546,7 +569,7 @@ def create_datasets(data_path,
             # append the data into clients_shard
             for i, split in enumerate(splitted_index):
                 clients_shard[i].extend(split)
-        print(clients_shard)
+        
         partition_info = np.transpose(np.vstack(partition_info))
         if print_count:
             print(partition_info)
@@ -619,7 +642,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "CIFAR10"
+    dataset_name = "Food101"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
@@ -628,7 +651,7 @@ if __name__ == '__main__':
     local_datasets, test_dataset, val_dataset, _ = create_datasets(data_path, 
                                                                    dataset_name, 
                                                                    num_clients=10, 
-                                                                   num_shards=200, iid=False, transform=None, non_iid_mode='dirichlet', dir_alpha=100000000.0, print_count=True)
+                                                                   num_shards=200, iid=True, transform=None, non_iid_mode='dirichlet', dir_alpha=100000000.0, print_count=True)
     print(_)
     print(len(val_dataset))
     sample_index = 1000
