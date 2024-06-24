@@ -179,6 +179,45 @@ def create_datasets(data_path,
             transform = test_preprocess
         )
         
+    elif dataset_name == "SVHN":
+        std = (0.229, 0.224, 0.225)
+        mean = (0.485, 0.456, 0.406)
+        from_list_link = False
+        
+        if transform:
+            preprocess = transform
+        else:
+            preprocess = torchvision.transforms.Compose([
+                torchvision.transforms.Resize(IMG_RESIZE), 
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize(mean, std),
+            ])
+        
+        test_preprocess = torchvision.transforms.Compose([
+                torchvision.transforms.Resize(IMG_RESIZE), 
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize(mean, std),
+            ])
+
+        training_dataset = torchvision.datasets.SVHN(
+            root=data_path,
+            split='train',
+            download=True,
+            transform = None
+        )
+        test_dataset = torchvision.datasets.SVHN(
+            root=data_path,
+            split='test',
+            download=True,
+            transform = test_preprocess
+        )
+        
+        # create .data and .targets for the dataset
+        training_dataset.data = training_dataset.data.transpose((0, 2, 3, 1)) # to width, height, channel
+        test_dataset.data = test_dataset.data.transpose((0, 2, 3, 1))
+        training_dataset.targets = [int(x) for x in training_dataset.labels]
+        test_dataset.targets = [int(x) for x in test_dataset.labels]
+        
     elif dataset_name == "FMNIST":
         # check if transform is defined:
         mean = (0.5, 0.5, 0.5)
@@ -642,7 +681,7 @@ if __name__ == '__main__':
     from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
     from utils import predict_step
     data_path = "../../dataset"
-    dataset_name = "Food101"
+    dataset_name = "SVHN"
     
     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
@@ -654,7 +693,7 @@ if __name__ == '__main__':
                                                                    num_shards=200, iid=True, transform=None, non_iid_mode='dirichlet', dir_alpha=100000000.0, print_count=True)
     print(_)
     print(len(val_dataset))
-    sample_index = 1000
+    sample_index = 0
     ex_dataset = local_datasets[0]
     # output raw
     ex_dataset.return_raw = True

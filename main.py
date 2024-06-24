@@ -323,8 +323,8 @@ if __name__ == '__main__':
                 train_clients.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            total_selected_clients = len(selected_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_clients):
@@ -418,8 +418,8 @@ if __name__ == '__main__':
                 logger.info(f'Elapsed time: {elapsed_time}...')
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in trained_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in trained_clients]
+            total_selected_clients = len(trained_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in trained_clients]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(trained_clients):
@@ -546,8 +546,8 @@ if __name__ == '__main__':
                 train_clients.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            total_selected_clients = len(selected_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
 
             global_w = server_model.state_dict()
             ## update aggregation time
@@ -634,8 +634,8 @@ if __name__ == '__main__':
                 train_clients.train(algorithm='FedAvg', opt=args.opt, lr=args.lr)
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            total_selected_clients = len(selected_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_clients):
@@ -753,8 +753,8 @@ if __name__ == '__main__':
                 Client_accuracy_record[train_clients.id] = test_result['acc']
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            total_selected_clients = len(selected_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_clients):
@@ -884,8 +884,8 @@ if __name__ == '__main__':
                 client.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            total_selected_clients = len(selected_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_clients):
@@ -994,8 +994,8 @@ if __name__ == '__main__':
                 client.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_client])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_client]
+            total_selected_clients = len(selected_client)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_client]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_client):
@@ -1103,8 +1103,8 @@ if __name__ == '__main__':
                 client.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
             
             ## Update server model
-            total_data_points = sum([len(train_clients)for train_clients in selected_client])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_client]
+            total_selected_clients = len(selected_client)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_client]
 
             global_w = server_model.state_dict()
             for net_id, train_clients in enumerate(selected_client):
@@ -1171,8 +1171,8 @@ if __name__ == '__main__':
                 local_models.append(train_clients.model.state_dict())
             
             ## Count the frequencies
-            total_data_points = sum([len(train_clients)for train_clients in selected_clients])
-            fed_avg_freqs = [len(train_clients)/ total_data_points for train_clients in selected_clients]
+            total_selected_clients = len(selected_clients)
+            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
             
             ## get the permutation and try combination of local models and see which one is the best accordnnig to the evaluator test dataset
             best_model = None
