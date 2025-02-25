@@ -4,11 +4,8 @@ backup/
 logs/
 *.gguf
 *.ipynb
-models/
-multiple_run.sh
-GoogleNews-vectors-negative300.bin
 .ipynb_checkpoints/
+models/
 test_sample.py
 sample.txt
 fig/*
-example_of_description.txt

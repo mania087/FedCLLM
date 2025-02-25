@@ -5,16 +5,9 @@ import torch.nn as nn
 import numpy as np
 import torchvision.transforms.functional as F
 import time
-import nltk
-
 from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
 from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
-
-from nltk.tokenize import word_tokenize
-from gensim.models import Word2Vec
 from sklearn.metrics import confusion_matrix
-from sklearn.metrics.pairwise import cosine_similarity
-
 
 def mkdirs(dirpath):
     try:
@@ -94,45 +87,6 @@ def get_data_description(data, num_sample, model, feature_extractor, tokenizer, 
     data.return_raw = False
 
     return client_description
-  
-# Tokenize and lowercase the sentences
-def preprocess(sentences):
-    processed = [word_tokenize(sentence.lower()) for sentence in sentences]
-    return processed
-
-def sentence_embedding(sentence, model):
-    words = [word for word in sentence if word in model]
-    if words:
-        return sum([model[word] for word in words]) / len(words)
-        #return sum([model.wv[word] for word in words]) / len(words)
-    else:
-        return None
-
-def normalize_value(score):
-    max_val = 1
-    min_val = -1
-    normalized_score = (score - min_val) / (max_val - min_val)
-    return normalized_score
-
-def cosine_similarity_matrix(embeddings1, embeddings2):
-    similarity_matrix = [[ normalize_value(cosine_similarity([emb1], [emb2])[0][0]) for emb2 in embeddings2] for emb1 in embeddings1]
-    return similarity_matrix
-
-def compare_sentences_score(sentence1, sentence2, model):
-    list1 = preprocess(sentence1)
-    list2 = preprocess(sentence2)
-    
-    #model = Word2Vec(list1 + list2, vector_size=100, window=5, min_count=1, sg=0)
-    ## Use pretrained model
-    
-    # Calculate sentence embeddings for both lists
-    list1_embeddings = [sentence_embedding(sentence, model) for sentence in list1]
-    list2_embeddings = [sentence_embedding(sentence, model) for sentence in list2]
-    
-    similarity_matrix = cosine_similarity_matrix(list1_embeddings, list2_embeddings)
-    
-    return similarity_matrix
-    
 
 def train(net, 
           trainloader: torch.utils.data.DataLoader,

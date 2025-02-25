@@ -2,13 +2,11 @@ import numpy as np
 import torch
 import random
 import copy
-import itertools
 import datetime
 import openai 
 import logging
 import os
 import json
-import gensim.downloader
 import argparse
 import torchvision.models as models
 import time
@@ -20,8 +18,7 @@ from sklearn.manifold import TSNE
 from dataloader import create_datasets
 from sklearn.metrics import ConfusionMatrixDisplay
 from client import Client
-from model import CnnModel, ResNet50, FineTunedModel, ResNet18
-from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key, mkdirs, compare_sentences_score, get_model_combination
+from utils import test, get_image_to_text_model, get_data_description, get_completion, get_api_key, mkdirs
 
 ## set key
 openai.api_key  = get_api_key('backup/gpt_key.txt')
@@ -88,18 +85,17 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log_file_name', type=str, default=None, help='The log file name')
     parser.add_argument('--data_dir', type=str, required=False, default='../../dataset', help='Data directory path')
-    parser.add_argument('--dataset', type=str, required=False, default='Food101', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10, Cub2011, Oxford102')
-    parser.add_argument('--malicious_dataset', type=str, required=False, default='TinyImagenet', help='Dataset name: TinyImagenet, Food101, FMNIST, MNIST, CIFAR10, Cub2011, Oxford102')
+    parser.add_argument('--dataset', type=str, required=False, default='Food101', help='Dataset name: TinyImagenet, Food101, MNIST, CIFAR10, Oxford102')
+    parser.add_argument('--malicious_dataset', type=str, required=False, default='TinyImagenet', help='Dataset name: TinyImagenet, Food101, MNIST, CIFAR10, Oxford102')
     parser.add_argument('--logdir', type=str, required=False, default="./logs/", help='Log directory path')
     parser.add_argument('--modeldir', type=str, required=False, default="./models/", help='Model directory path')
-    parser.add_argument('--algorithm', type=str, default='Proposed', help='Available algorithm: FedAvg, Proposed, ACS, Shapley, FedCS, FedLim')
+    parser.add_argument('--algorithm', type=str, default='Proposed', help='Available algorithm: FedAvg, FedAvgM, Proposed, ACS')
     parser.add_argument('--num_clients', type=int, default=15, help='Number of clients to simulate')
     parser.add_argument('--num_malicious_clients', type=int, default=5, help='Number of malicious clients to simulate')
     parser.add_argument('--local_epoch', type=int, default=1, help='Number of local epoch for each round')
     parser.add_argument('--batch_size', type=int, default=64, help='Number of batch size for each client')
     parser.add_argument('--rounds', type=int, default=100, help='Number of rounds for FL training')
     parser.add_argument('--C', type=float, default=1.0, help='Percentage of clients available for each round')
-    parser.add_argument('--sim_threshold', type=float, default=0.5, help='Threshold for cosine similarity method')
     parser.add_argument('--iid', action='store_true', help='Set data split to IID or non-IID')
     parser.add_argument('--fraction_rank', type=float, default=0.5, help='ACS parameter: Fraction of clients with highest accuracy')
     parser.add_argument('--num_description_sample', type=int, default=10, help='number of data descriptions to sample from each client')
@@ -109,7 +105,6 @@ def get_args():
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate for the model')
     parser.add_argument('--opt', type=str, default='adam', help='optimizer for the model: sgd, adam, rmsprop')
     parser.add_argument('--word_summary_max', type=int, default=15, help='maximum number of words for summary, CURRENTLY FOR SERVER')
-    parser.add_argument('--t_round', type=float, default=60, help='FedCS parameter: threshold time for the round')
     parser.add_argument('--non_iid_mode', type=str, default='dirichlet', help='mode for non-iid: dirichlet, shard')
     parser.add_argument('--dirichlet_alpha', type=float, default=10, help='alpha parameter for dirichlet distribution')
     parser.add_argument('--top_p', type=float, default=0.1, help='subset of token to consider for LLM: client selection step')
@@ -123,6 +118,7 @@ if __name__ == '__main__':
     args = get_args()
     mkdirs(args.logdir)
     mkdirs(args.modeldir)
+    mkdirs('./fig/')
     
     # check if CUDA is available
     if not torch.cuda.is_available():
@@ -230,20 +226,9 @@ if __name__ == '__main__':
 
     ## start Federated Learning cycle:
     ## set server model 
-    #server_model = CnnModel(input_size=(3,32,32), num_classes=num_classes)
-    
-    #server_model = ResNet50(category.shape[0])
     
     server_model = models.resnet18(pretrained=False)
     server_model.fc = torch.nn.Linear(server_model.fc.in_features, category.shape[0])
-    
-    #server_model = models.mobilenet_v2(pretrained=False)
-    #server_model.classifier[1] = torch.nn.Linear(server_model.last_channel, category.shape[0])
-    
-    #mobilenet = models.mobilenet_v2(pretrained=True)
-    #server_model = FineTunedModel(mobilenet, category.shape[0])
-    #for param in server_model.base_model.features.parameters():
-    #    param.requires_grad = False
     
     print('number of classes:', category)
 
@@ -368,235 +353,7 @@ if __name__ == '__main__':
             
             ## save model
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
-    
-    elif args.algorithm== "FedLim":
-        ## use the t_round as deadline for the round
-        
-        for train_round in range(args.rounds):
-            print(f'Round {train_round}...')
-            logger.info(f'Round {train_round}...')
-            ## number of clients to pick
-            num_clients_to_pick = int(args.C * len(clients))
-            ## pick clients
-            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
-            selected_clients = [clients[client_index] for client_index in round_selected_clients]
             
-            start_time_round = time.time()
-            elapsed_time = 0.0
-            index=0
-            trained_clients = []
-            
-            ## simulate upload time
-            # use assumption from fedcs paper
-            # mean trans = 1.4, sigma = 1.6
-            # NOTE: but if we want to use real time machine , don't use the simulation time
-            for client in selected_clients:
-                upload_time = -1.0
-                while upload_time < 0.0:
-                    delta_k = random.gauss(1.4, 1.6)
-                    upload_time = size_all_mb/delta_k
-                client.time_upload = upload_time
-                print(f'Client {client.id} time upload: {client.time_upload}')
-                logger.info(f'Client {client.id} time upload: {client.time_upload}')
-                
-            while (elapsed_time < args.t_round) and (index<len(selected_clients)):
-                
-                current_client = selected_clients[index]
-                ## get updated model from server
-                current_client.model = copy.deepcopy(server_model)
-                # use multiple GPUs
-                current_client.model = torch.nn.DataParallel(current_client.model)
-                ## train clients
-                logger.info(f'Training client {current_client.id}...')
-                current_client.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
-                
-                # update index
-                trained_clients.append(current_client)
-                index += 1
-                elapsed_time += time.time() + current_client.time_upload - start_time_round
-                print(f'Elapsed time: {elapsed_time}...')
-                logger.info(f'Elapsed time: {elapsed_time}...')
-            
-            ## Update server model
-            total_selected_clients = len(trained_clients)
-            fed_avg_freqs = [1/ total_selected_clients for _ in trained_clients]
-
-            global_w = server_model.state_dict()
-            for net_id, train_clients in enumerate(trained_clients):
-                try:
-                    net_para = train_clients.model.module.state_dict()
-                except AttributeError:
-                    net_para = train_clients.model.state_dict()
-                if net_id == 0:
-                    for key in net_para:
-                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-                else:
-                    for key in net_para:
-                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
-            
-            ## global model load new weights
-            server_model.load_state_dict(global_w)
-
-            ## test model
-            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
-            
-            # create confusion matrix figure for every 10 epochs
-            if train_round % 10 == 0:
-                # fig title
-                # plot embeddings
-                labels = [x for x in range(category.shape[0])]
-                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
-                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
-                
-                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
-                
-                plot_tsne(server_model, test_loader, device, labels, fig_title)
-                
-            print(f"loss:{test_loss.item()}, metrics:{results}")
-            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
-            ## metrics saved
-            metrics["loss"].append(test_loss.item())
-            metrics["acc"].append(results["acc"])
-            metrics["rec"].append(results["rec"])
-            metrics["f1"].append(results["f1"])
-            metrics["prec"].append(results["prec"])
-            
-            ## save model
-            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
-        
-    elif args.algorithm == "FedCS":
-        ## Set algorithm specific requirements
-        time_client_selection = 0.0
-        time_aggregation = 0.0
-        
-        for train_round in range(args.rounds):
-            print(f'Round {train_round}...')
-            logger.info(f'Round {train_round}...')
-            ## number of clients to pick
-            num_clients_to_pick = int(args.C * len(clients))
-            ## pick clients
-            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
-            available_clients = [clients[client_index] for client_index in round_selected_clients]
-            
-            ## simulate upload time
-            # use assumption from fedcs paper
-            # mean trans = 1.4, sigma = 1.6
-            # NOTE: but if we want to use real time machine , don't use the simulation time
-            for client in available_clients:
-                upload_time = -1.0
-                while upload_time < 0.0:
-                    delta_k = random.gauss(1.4, 1.6)
-                    upload_time = size_all_mb/delta_k
-                client.time_upload = upload_time
-                print(f'Client {client.id} time upload: {client.time_upload}')
-                logger.info(f'Client {client.id} time upload: {client.time_upload}')
-            
-            ## client_selection
-            elapsed_time = 0.0
-            selected_clients = []
-            ## start the client selection time
-            client_selection_start_time = time.time()
-            while len(available_clients) !=0:
-                # to select the k
-                x_list = []
-                for client in available_clients:
-                    max_update_time = max(0, client.time_update - elapsed_time)
-                    if len(selected_clients) <= 0:
-                        t_d_s = 0.0
-                    else:
-                        # t_d_s is client with longest update time
-                        t_d_s = max([client.time_upload for client in selected_clients])
-                    temp_list = selected_clients + [client]
-                    t_d_sk = max([client.time_upload for client in temp_list])
-                    
-                    x_list.append(1/(t_d_sk - t_d_s + client.time_upload + max_update_time))
-                
-                ## find index with maximum in x_list
-                max_index = np.argmax(x_list)
-                ## remove it from available client
-                current_client = available_clients.pop(max_index)
-                ## update temp elapsed_time
-                temp_elapsed_time = elapsed_time + current_client.time_upload + max(0, current_client.time_update - elapsed_time)
-                ## calculate t
-                temp_list = selected_clients + [current_client]
-                t_d_s_with_x = max([client.time_upload for client in temp_list])
-                
-                t_count = time_client_selection+ t_d_s_with_x + temp_elapsed_time + time_aggregation
-                print(f'Client {current_client.id} t_count: {t_count}')
-                logger.info(f'Client {current_client.id} t_count: {t_count}')
-                
-                # if t_count is smaller than t_round then add to selected_clients
-                if t_count < args.t_round:
-                    selected_clients.append(current_client)
-                    elapsed_time = temp_elapsed_time
-        
-            ## update the time_client_selection
-            time_client_selection = time.time() - client_selection_start_time
-            
-            print(f'Training with {len(selected_clients)} clients...')
-            logger.info(f'Training with {len(selected_clients)} clients...')
-
-            for train_clients in selected_clients:
-                ## get updated model from server
-                train_clients.model = copy.deepcopy(server_model)
-                # use multiple GPUs
-                train_clients.model = torch.nn.DataParallel(train_clients.model)
-                ## train clients
-                logger.info(f'Training client {train_clients.id}...')
-                train_clients.train(algorithm=args.algorithm, opt=args.opt, lr=args.lr)
-            
-            ## Update server model
-            total_selected_clients = len(selected_clients)
-            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
-
-            global_w = server_model.state_dict()
-            ## update aggregation time
-            aggregation_start_time = time.time()
-            for net_id, train_clients in enumerate(selected_clients):
-                try:
-                    net_para = train_clients.model.module.state_dict()
-                except AttributeError:
-                    net_para = train_clients.model.state_dict()
-                if net_id == 0:
-                    for key in net_para:
-                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-                else:
-                    for key in net_para:
-                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
-            
-            time_aggregation = time.time() - aggregation_start_time
-            
-            ## global model load new weights
-            server_model.load_state_dict(global_w)
-
-            ## test model
-            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
-            
-            # create confusion matrix figure for every 10 epochs
-            if train_round % 10 == 0:
-                # fig title
-                # plot embeddings
-                labels = [x for x in range(category.shape[0])]
-                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
-                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
-                
-                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
-                
-                plot_tsne(server_model, test_loader, device, labels, fig_title)
-                
-            print(f"loss:{test_loss.item()}, metrics:{results}")
-            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
-            ## metrics saved
-            metrics["loss"].append(test_loss.item())
-            metrics["acc"].append(results["acc"])
-            metrics["rec"].append(results["rec"])
-            metrics["f1"].append(results["f1"])
-            metrics["prec"].append(results["prec"])
-            
-            ## save model
-            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
-                
-        
     elif args.algorithm == 'FedAvgM':
         ## Set algorithm specific requirements
         moment_v = copy.deepcopy(server_model.state_dict())
@@ -930,307 +687,7 @@ if __name__ == '__main__':
             metrics["honest_client_percentage"].append(number_of_selected_honest_client/len(id_of_honest_clients_available))
             
             torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
-            
-    elif args.algorithm == 'Proposed_old':
-        ## Set algorithm specific requirements
-        
-        ## Open image to text model
-        ## NOTE: If we create the model language model for each client, it will be too much for one computer
-        img_text_model, feature_extractor, tokenizer = get_image_to_text_model()
 
-        for train_round in range(args.rounds):
-            # evaluator description
-            evaluator_description = get_data_description(val_dataset, args.server_num_description, img_text_model, feature_extractor, tokenizer)
-            
-            print(f'Round {train_round}...')
-            logger.info(f'Round {train_round}...')
-            
-            ## Build description
-            overall_description= ""
-            # add evaluator description
-            overall_description += f"Evaluator: {evaluator_description}\n"
-
-            ## number of clients to pick
-            num_clients_to_pick = int(args.C * len(clients))
-            ## list clients
-            round_available_index = np.random.choice(len(clients), num_clients_to_pick, replace=False)
-            available_clients = [clients[client_index] for client_index in round_available_index]
-
-            # for each listed available clients sample num_sample of their data and get it's description by language model
-            for index,client in enumerate(available_clients):
-                client_description = get_data_description(client.train_dataset , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
-                #overall_description += f"Client {index}: {client_description}\n"
-                ## for debugging first
-                print(f'Client {client.id} description:{client_description}')
-                logger.info(f'Client {client.id} description:{client_description}')
-                overall_description += f"Client {client.id}: {client_description}\n"
-
-            ## set up the prompt 
-            prompt = f"""
-            Data description: '''{overall_description}'''
-            [...]
-            Comparing the descriptions above, I want you to give me a list of client's ID that have very similar context with the evaluator's context by filling the empty bracket above. No need for explanation. Just fill the bracket with a list of client's ID.
-            If there are no clients with similar context, return it as an empty list.
-            """
-            
-            response = get_completion(prompt, top_p=args.top_p, temperature=args.temperature)
-            print(prompt)
-            print(f'Response from GPT: \n{response}')
-            logger.info(f'Response from GPT, selected clients: {response}...')
-            # selected_client = [available_clients[int(x)] for x in response[1:-1].split(',')]
-            ## for debugging first
-            parsed_reponse =  [int(x) for x in response[1:-1].split(',')]
-            selected_client = [client for client in available_clients if int(client.id) in parsed_reponse]
-            
-            ## do training
-
-            for client in selected_client:
-                ## get updated model from server
-                client.model = copy.deepcopy(server_model)
-                # use multiple GPUs
-                client.model = torch.nn.DataParallel(client.model)
-                ## train clients
-                logger.info(f'Training client {client.id}...')
-                client.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
-            
-            ## Update server model
-            total_selected_clients = len(selected_client)
-            fed_avg_freqs = [1/ total_selected_clients for _ in selected_client]
-
-            global_w = server_model.state_dict()
-            for net_id, train_clients in enumerate(selected_client):
-                try:
-                    net_para = train_clients.model.module.state_dict()
-                except AttributeError:
-                    net_para = train_clients.model.state_dict()
-                if net_id == 0:
-                    for key in net_para:
-                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-                else:
-                    for key in net_para:
-                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
-            
-            ## global model load new weights
-            server_model.load_state_dict(global_w)
-
-            ## test model
-            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
-            
-            # create confusion matrix figure for every 10 epochs
-            if train_round % 10 == 0:
-                # fig title
-                # plot embeddings
-                labels = [x for x in range(category.shape[0])]
-                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
-                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
-                
-                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
-                
-                plot_tsne(server_model, test_loader, device, labels, fig_title)
-                
-            print(f"loss:{test_loss.item()}, metrics:{results}")
-            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
-            ## metrics saved
-            metrics["loss"].append(test_loss.item())
-            metrics["acc"].append(results["acc"])
-            metrics["rec"].append(results["rec"])
-            metrics["f1"].append(results["f1"])
-            metrics["prec"].append(results["prec"])
-            
-            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
-    
-    ### Other algorithm
-    elif args.algorithm=='Cosine':
-        ## Open image to text model
-        ## NOTE: If we create the model language model for each client, it will be too much for one computer
-        img_text_model, feature_extractor, tokenizer = get_image_to_text_model()
-        
-        ## load pretrained word2vec
-        word_model = gensim.downloader.load('word2vec-google-news-300')
-        # word_model = models.KeyedVectors.load_word2vec_format('GoogleNews-vectors-negative300.bin', binary=True)
-        
-        for train_round in range(args.rounds):
-            # evaluator description
-            evaluator_description = get_data_description(val_dataset, args.num_description_sample, img_text_model, feature_extractor, tokenizer)
-            
-            print(f'Round {train_round}...')
-            logger.info(f'Round {train_round}...')
-            
-            ## Print evaluator description
-            print(f'Evaluator description:{evaluator_description}')
-            logger.info(f'Evaluator description:{evaluator_description}')
-
-            ## number of clients to pick
-            num_clients_to_pick = int(args.C * len(clients))
-            ## list clients
-            round_available_index = np.random.choice(len(clients), num_clients_to_pick, replace=False)
-            available_clients = [clients[client_index] for client_index in round_available_index]
-            
-            # for each listed available clients sample num_sample of their data and get it's description by language model
-            selected_client = []
-            selected_client_index = []
-            for index,client in enumerate(available_clients):
-                client_description = get_data_description(client.train_dataset , args.num_description_sample, img_text_model, feature_extractor, tokenizer)
-                #print(f'Client {index} description:{client_description}')
-                #logger.info(f'Client {index} description:{client_description}')
-                ## for debugging
-                print(f'Client {client.id} description:{client_description}')
-                logger.info(f'Client {client.id} description:{client_description}')
-                
-                # get distance
-                client_similarity = compare_sentences_score(evaluator_description,client_description,word_model)
-                avg_similarity = np.average(np.array(client_similarity))
-                
-                #print(f'Similarity of client {index}:{avg_similarity}')
-                #logger.info(f'Similarity of client {index}:{avg_similarity}')
-                ## for debugging
-                print(f'Similarity of client {client.id}:{avg_similarity}')
-                logger.info(f'Similarity of client {client.id}:{avg_similarity}')
-                # threshold for including the client
-                if avg_similarity > args.sim_threshold:
-                    selected_client.append(client)
-                    selected_client_index.append(index)
-                    
-            print(f'Included Clients:{selected_client_index}')
-            logger.info(f'Included Clients:{selected_client_index}')
-                    
-            ## do training
-            for client in selected_client:
-                ## get updated model from server
-                client.model = copy.deepcopy(server_model)
-                ## train clients
-                logger.info(f'Training client {client.id}...')
-                client.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
-            
-            ## Update server model
-            total_selected_clients = len(selected_client)
-            fed_avg_freqs = [1/ total_selected_clients for _ in selected_client]
-
-            global_w = server_model.state_dict()
-            for net_id, train_clients in enumerate(selected_client):
-                net_para = train_clients.model.state_dict()
-                if net_id == 0:
-                    for key in net_para:
-                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-                else:
-                    for key in net_para:
-                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
-            
-            ## global model load new weights
-            server_model.load_state_dict(global_w)
-
-            ## test model
-            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
-            
-            # create confusion matrix figure for every 10 epochs
-            if train_round % 10 == 0:
-                # fig title
-                # plot embeddings
-                labels = [x for x in range(category.shape[0])]
-                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
-                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
-                
-                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
-                
-                plot_tsne(server_model, test_loader, device, labels, fig_title)
-                
-            print(f"loss:{test_loss.item()}, metrics:{results}")
-            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
-            ## metrics saved
-            metrics["loss"].append(test_loss.item())
-            metrics["acc"].append(results["acc"])
-            metrics["rec"].append(results["rec"])
-            metrics["f1"].append(results["f1"])
-            metrics["prec"].append(results["prec"])
-            
-            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
-    ## Shapley Value ##
-    elif args.algorithm=='Shapley':
-        ## Set algorithm specific requirements
-
-        for train_round in range(args.rounds):
-            print(f'Round {train_round}...')
-            logger.info(f'Round {train_round}...')
-            ## number of clients to pick
-            num_clients_to_pick = int(args.C * len(clients))
-            ## pick clients
-            round_selected_clients = np.random.choice(len(clients), num_clients_to_pick, replace=False)
-            selected_clients = [clients[client_index] for client_index in round_selected_clients]
-            print(f'Training with {len(selected_clients)} clients...')
-            logger.info(f'Training with {len(selected_clients)} clients...')
-            
-            # get availible local updates first
-            local_models= []
-            for train_clients in selected_clients:
-                ## get updated model from server
-                train_clients.model = copy.deepcopy(server_model)
-                ## train clients
-                logger.info(f'Training client {train_clients.id}...')
-                train_clients.train(algorithm="FedAvg", opt=args.opt, lr=args.lr)
-                ## get local model
-                local_models.append(train_clients.model.state_dict())
-            
-            ## Count the frequencies
-            total_selected_clients = len(selected_clients)
-            fed_avg_freqs = [1/ total_selected_clients for _ in selected_clients]
-            
-            ## get the permutation and try combination of local models and see which one is the best accordnnig to the evaluator test dataset
-            best_model = None
-            best_accuracy = 0.0
-            template_model = copy.deepcopy(server_model)
-            for i in range(0,len(local_models)):
-                model_indexes = list(range(0,len(local_models)))
-                list_of_permutations = list(itertools.combinations(model_indexes, i+1))
-                
-                for permutation in list_of_permutations:
-                    # get the model parameters
-                    model_parameters = []
-                    for index_model in permutation:
-                        model_parameters.append(local_models[index_model])
-                    # get the combination parameters
-                    combination_weight = get_model_combination(model_parameters, template_model)
-                    # load the combination parameters
-                    template_model.load_state_dict(combination_weight)
-                    ## test model
-                    _, results = test(template_model, test_loader)
-                    
-                    print(f"model of {permutation}, metrics:{results}")
-                    logger.info(f"model of {permutation}, metrics:{results}")
-                    
-                    if results["acc"]>best_accuracy:
-                        # replace the best model
-                        best_accuracy = results["acc"]
-                        best_model = copy.deepcopy(template_model)
-            
-            ## load global model with the best model
-            server_model.load_state_dict(best_model.state_dict())
-
-            ## test model
-            test_loss, results, conf_matrix = test(server_model, test_loader, device, get_confusion_matrix=True)
-            
-            # create confusion matrix figure for every 10 epochs
-            if train_round % 10 == 0:
-                # fig title
-                # plot embeddings
-                labels = [x for x in range(category.shape[0])]
-                cmp= ConfusionMatrixDisplay(confusion_matrix=conf_matrix, display_labels=labels)
-                cmp.plot().figure_.savefig(f'fig/confusion_matrix_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png')
-                
-                fig_title = f'fig/TSNE_{args.algorithm}_dataset_{args.dataset}_malicious_{args.malicious_dataset}-{date_time}.png'
-                
-                plot_tsne(server_model, test_loader, device, labels, fig_title)
-            
-            print(f"loss:{test_loss.item()}, metrics:{results}")
-            logger.info(f"loss:{test_loss.item()}, metrics:{results}")
-            ## metrics saved
-            metrics["loss"].append(test_loss.item())
-            metrics["acc"].append(results["acc"])
-            metrics["rec"].append(results["rec"])
-            metrics["f1"].append(results["f1"])
-            metrics["prec"].append(results["prec"])
-            
-            ## save model
-            torch.save(server_model.state_dict(), f'models/{args.algorithm}_{date_time}.pt')
     else:
         pass
     
