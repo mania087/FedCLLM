@@ -3,17 +3,16 @@ import openai
 import os
 import torch.nn as nn
 import numpy as np
-import torch.nn.functional as F
+import torchvision.transforms.functional as F
 import time
 import nltk
 
 from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
-from PIL import Image
-from torchvision import transforms
 from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
 
 from nltk.tokenize import word_tokenize
 from gensim.models import Word2Vec
+from sklearn.metrics import confusion_matrix
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -22,27 +21,39 @@ def mkdirs(dirpath):
         os.makedirs(dirpath)
     except Exception as _:
         pass
-    
+
+def get_model_combination(local_parameters, server_model):
+    combination_model_parameter = server_model.state_dict()
+    for net_id, net_para in enumerate(local_parameters):
+        if net_id == 0:
+            for key in net_para:
+                combination_model_parameter[key] = net_para[key] * (1/len(local_parameters))
+        else:
+            for key in net_para:
+                combination_model_parameter[key] += net_para[key] * (1/len(local_parameters))
+    # return the combination of local models
+    return combination_model_parameter
+            
 def get_image_to_text_model():
-  model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-  feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-  tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-  return model, feature_extractor, tokenizer
+    model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    return model, feature_extractor, tokenizer
 
 def predict_step(images, model, feature_extractor, tokenizer,
                  gen_kwargs={"max_length": 16, "num_beams": 4}):
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  model.to(device)
+    pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
+    pixel_values = pixel_values.to(device)
 
-  pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
-  pixel_values = pixel_values.to(device)
+    output_ids = model.generate(pixel_values, **gen_kwargs)
 
-  output_ids = model.generate(pixel_values, **gen_kwargs)
-
-  preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-  preds = [pred.strip() for pred in preds]
-  return preds
+    preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+    preds = [pred.strip() for pred in preds]
+    return preds
 
 def get_api_key(txt_file):
     contents = ''
@@ -50,25 +61,37 @@ def get_api_key(txt_file):
         contents = f.read()
     return contents
 
-def get_completion(prompt, model="gpt-3.5-turbo"):
+def get_completion(prompt, model="gpt-3.5-turbo", temperature=0.2, top_p=0.1,retry=10, waiting_time=1.0):
     messages = [{"role": "user", "content": prompt}]
-    response = openai.ChatCompletion.create(
-        model=model,
-        messages=messages,
-        temperature=0.2, # this is the degree of randomness of the model's output
-        top_p= 0.1
-    )
-    return response.choices[0].message["content"]
+    for i in range(retry):
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=messages,
+                temperature=temperature, # this is the degree of randomness of the model's output
+                top_p= top_p
+            )
+            response_answer = response.choices[0].message["content"]
+        except openai.APIError as e:
+            print(f"Error: {e}")
+            response_answer = e
+            time.sleep(waiting_time*i) # give longer waiting time in case of time out
+        else:
+            break
+    return response_answer
 
-def get_data_description(data, num_sample, model, feature_extractor, tokenizer):
+def get_data_description(data, num_sample, model, feature_extractor, tokenizer, resize=224):
     """ get data description for num_sample using the language model """
+    ## set to output raw data
+    data.return_raw = True
     ## get num_sample random indexes
     indexes = np.random.choice(len(data), num_sample, replace=False)
     ## transform batches into pil images
-    to_pil = transforms.ToPILImage()
-    batch_of_pil_images = [to_pil(data[x][0]) for x in indexes]
+    batch_of_pil_images = [F.resize(data[x][0], resize) for x in indexes]
     ## get data description
     client_description = predict_step(batch_of_pil_images, model, feature_extractor, tokenizer)
+    ## return data mode to preprocess
+    data.return_raw = False
 
     return client_description
   
@@ -112,8 +135,10 @@ def compare_sentences_score(sentence1, sentence2, model):
     
 
 def train(net, 
-          trainloader: torch.utils.data.DataLoader, 
+          trainloader: torch.utils.data.DataLoader,
+          lr: float, 
           epochs: int,
+          opt: str,
           device: torch.device, 
           valloader: torch.utils.data.DataLoader = None,
           verbose=False) -> None:
@@ -121,7 +146,12 @@ def train(net,
     """Train the network."""
     # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(net.parameters(), lr = 0.01)
+    if opt == "adam":
+        optimizer = torch.optim.Adam([p for p in net.parameters() if p.requires_grad], lr = lr) 
+    elif opt == "sgd":
+        optimizer = torch.optim.SGD([p for p in net.parameters() if p.requires_grad], lr = lr, momentum=0.9)
+    elif opt == "rmsprop":
+        optimizer = torch.optim.RMSprop([p for p in net.parameters() if p.requires_grad], lr = lr)
     
     print(f"Training {epochs} epoch(s) w/ {len(trainloader)} batches each")
     start_time = time.time()
@@ -186,7 +216,7 @@ def train(net,
     return results
 
 
-def test(net, testloader, device: str = "cpu"):
+def test(net, testloader, device: str = "cpu",  get_confusion_matrix=False):
     """Validate the network on the entire test set."""
     criterion = nn.CrossEntropyLoss()
     loss = 0.0
@@ -220,6 +250,9 @@ def test(net, testloader, device: str = "cpu"):
     recall = recall_score(y_true, y_pred, average='macro')
     # calculate F1-score
     f1 = f1_score(y_true, y_pred, average='macro')
+    
+    # confusion matrix
+    conf_matrix = confusion_matrix(y_true, y_pred)
 
     results = {
         "acc":acc,
@@ -227,5 +260,7 @@ def test(net, testloader, device: str = "cpu"):
         "rec":recall,
         "f1":f1,
     }
-    
-    return loss, results
+    if get_confusion_matrix:
+        return loss, results, conf_matrix
+    else:
+        return loss, results

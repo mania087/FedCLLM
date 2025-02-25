@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-
+import time
 from torch.utils.data.sampler import SubsetRandomSampler
 from utils import train, test
 
@@ -20,7 +20,13 @@ class Client():
             self.device = 'cpu'
         else:
             self.device = 'cuda'
+        
+        # for fedcs
+        self.time_update = 0.0
+        self.time_upload = 0.0
 
+        self.train_dataset = self.config["train_data"]
+        
         # if we use validation
         if self.config["val_size"] > 0.0:
             num_train = len(self.config["train_data"])
@@ -36,21 +42,20 @@ class Client():
             # prepare data loaders (combine dataset and sampler)
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
                                                             batch_size=self.config["batch_size"],
+                                                            shuffle=True,
                                                             sampler=train_sampler,
                                                             drop_last=True)
             self.valid_loader = torch.utils.data.DataLoader(self.config["train_data"],
                                                             batch_size=self.config["batch_size"],
+                                                            shuffle=True,
                                                             sampler=valid_sampler) 
             
-            # save raw train data
-            self.raw_train_data = [self.config["train_data"][x] for x in train_idx]
         else:
             self.train_loader = torch.utils.data.DataLoader(self.config["train_data"], 
+                                                            shuffle=True,
                                                             batch_size=self.config["batch_size"])
             self.valid_loader = None
             
-            # save raw train data
-            self.raw_train_data = self.config["train_data"]
 
     @property
     def model(self):
@@ -64,36 +69,24 @@ class Client():
         """Return a total size of the client's local data."""
         return len(self.train_loader.sampler)
     
-    def train(self, algorithm, verbose=False):
+    def train(self, algorithm, lr, opt, verbose=False):
         results= {}
+        start_time = time.time()
         if algorithm == "FedAvg":
             # FedAvg algorithm
             results = train(net=self.model, 
                             trainloader= self.train_loader, 
                             epochs= self.config["local_epoch"],
-                            device= self.device, 
-                            valloader= self.valid_loader,
-                            verbose=verbose)
-            
-        elif algorithm == "Proposed":
-            # Proposed algorithm
-            results = train(net=self.model, 
-                            trainloader= self.train_loader, 
-                            epochs= self.config["local_epoch"],
-                            device= self.device, 
-                            valloader= self.valid_loader,
-                            verbose=verbose)
-        elif algorithm == "Cosine":
-            # FedAvg with cosine selection
-            results = train(net=self.model, 
-                            trainloader= self.train_loader, 
-                            epochs= self.config["local_epoch"],
+                            lr=lr,
+                            opt=opt,
                             device= self.device, 
                             valloader= self.valid_loader,
                             verbose=verbose)
         else:
             # other algorithm
             pass
+        # update time for fedcs
+        self.time_update = time.time() - start_time
         
         if verbose:
             print(f"Train result client {self.id}: {results}")
@@ -101,6 +94,7 @@ class Client():
     def test(self):
         loss,acc = test(net = self.model, 
                         testloader = self.valid_loader,
+                        get_confusion_matrix=False,
                         device=self.device)
         print(f"Test result client {self.id}: {loss, acc}")
         
