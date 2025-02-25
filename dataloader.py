@@ -5,7 +5,17 @@ import random
 import torchvision
 import math
 from torch.utils.data import Dataset
+from PIL import Image
 
+class To3dFrom1D(object):
+    """Convert 1d to 3d."""
+
+    def __call__(self, image):
+
+        # expand dimension
+        image = torch.cat((image, image, image), dim=0)
+        return image
+    
 class CustomDataset(Dataset):
     def __init__(self, tensors, transforms=None):
         self.tensors =tensors
@@ -16,9 +26,13 @@ class CustomDataset(Dataset):
     def __getitem__(self, index):
         x = self.tensors[0][index]
         y = self.tensors[1][index]
-
+        
         if self.transforms:
-            x = self.transforms(x.numpy().astype(np.uint8))
+            if x.size()[2] ==1 :
+                x = x[:,:,0]
+            x = Image.fromarray(x.numpy().astype(np.uint8))
+            x = self.transforms(x)
+        
         return x,y
     
 def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, iid=True, transform=None, print_count=None):
@@ -31,14 +45,14 @@ def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, ii
         else:
             preprocess = torchvision.transforms.Compose([
                 torchvision.transforms.ToTensor(),
-                #torchvision.transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5))
+                torchvision.transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
             ])
 
         training_dataset = torchvision.datasets.CIFAR10(
             root=data_path,
             train=True,
             download=True,
-            transform = preprocess
+            transform = None
         )
         test_dataset = torchvision.datasets.CIFAR10(
             root=data_path,
@@ -53,24 +67,29 @@ def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, ii
             preprocess = transform
         else:
             preprocess = torchvision.transforms.Compose(
-                [torchvision.transforms.ToTensor()]
+                [torchvision.transforms.Resize(32), 
+                 torchvision.transforms.ToTensor(),
+                 To3dFrom1D(),
+                 torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                ]
             )
 
         training_dataset = torchvision.datasets.MNIST(
             root=data_path,
             train=True,
             download=True,
-            transform = preprocess
+            transform = None
         )
         test_dataset = torchvision.datasets.MNIST(
             root=data_path,
             train=False,
-            download=True,
+            download=False,
             transform = preprocess
         )
+    
     if training_dataset.data.ndim ==3: # make it batch (NxWxH => NxWxHx1)
         training_dataset.data.unsqueeze_(3)
-
+        
     # unique labels
     num_categories = np.unique(training_dataset.targets).shape[0]
 
@@ -150,4 +169,3 @@ def create_datasets(data_path, dataset_name, num_clients=100, num_shards=200, ii
             just_count += 1
 
     return local_datasets, test_dataset
-

@@ -1,22 +1,128 @@
 import torch
+import openai
+import os
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import time
+import nltk
 
+from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
+from PIL import Image
+from torchvision import transforms
 from sklearn.metrics import f1_score, recall_score, precision_score, accuracy_score
+
+from nltk.tokenize import word_tokenize
+from gensim.models import Word2Vec
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+def mkdirs(dirpath):
+    try:
+        os.makedirs(dirpath)
+    except Exception as _:
+        pass
+    
+def get_image_to_text_model():
+  model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+  feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+  tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+  return model, feature_extractor, tokenizer
+
+def predict_step(images, model, feature_extractor, tokenizer,
+                 gen_kwargs={"max_length": 16, "num_beams": 4}):
+
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  model.to(device)
+
+  pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
+  pixel_values = pixel_values.to(device)
+
+  output_ids = model.generate(pixel_values, **gen_kwargs)
+
+  preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+  preds = [pred.strip() for pred in preds]
+  return preds
+
+def get_api_key(txt_file):
+    contents = ''
+    with open(txt_file) as f:
+        contents = f.read()
+    return contents
+
+def get_completion(prompt, model="gpt-3.5-turbo"):
+    messages = [{"role": "user", "content": prompt}]
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=0.2, # this is the degree of randomness of the model's output
+        top_p= 0.1
+    )
+    return response.choices[0].message["content"]
+
+def get_data_description(data, num_sample, model, feature_extractor, tokenizer):
+    """ get data description for num_sample using the language model """
+    ## get num_sample random indexes
+    indexes = np.random.choice(len(data), num_sample, replace=False)
+    ## transform batches into pil images
+    to_pil = transforms.ToPILImage()
+    batch_of_pil_images = [to_pil(data[x][0]) for x in indexes]
+    ## get data description
+    client_description = predict_step(batch_of_pil_images, model, feature_extractor, tokenizer)
+
+    return client_description
+  
+# Tokenize and lowercase the sentences
+def preprocess(sentences):
+    processed = [word_tokenize(sentence.lower()) for sentence in sentences]
+    return processed
+
+def sentence_embedding(sentence, model):
+    words = [word for word in sentence if word in model]
+    if words:
+        return sum([model[word] for word in words]) / len(words)
+        #return sum([model.wv[word] for word in words]) / len(words)
+    else:
+        return None
+
+def normalize_value(score):
+    max_val = 1
+    min_val = -1
+    normalized_score = (score - min_val) / (max_val - min_val)
+    return normalized_score
+
+def cosine_similarity_matrix(embeddings1, embeddings2):
+    similarity_matrix = [[ normalize_value(cosine_similarity([emb1], [emb2])[0][0]) for emb2 in embeddings2] for emb1 in embeddings1]
+    return similarity_matrix
+
+def compare_sentences_score(sentence1, sentence2, model):
+    list1 = preprocess(sentence1)
+    list2 = preprocess(sentence2)
+    
+    #model = Word2Vec(list1 + list2, vector_size=100, window=5, min_count=1, sg=0)
+    ## Use pretrained model
+    
+    # Calculate sentence embeddings for both lists
+    list1_embeddings = [sentence_embedding(sentence, model) for sentence in list1]
+    list2_embeddings = [sentence_embedding(sentence, model) for sentence in list2]
+    
+    similarity_matrix = cosine_similarity_matrix(list1_embeddings, list2_embeddings)
+    
+    return similarity_matrix
+    
 
 def train(net, 
           trainloader: torch.utils.data.DataLoader, 
           epochs: int,
           device: torch.device, 
-          valloader: torch.utils.data.DataLoader = None) -> None:
+          valloader: torch.utils.data.DataLoader = None,
+          verbose=False) -> None:
     
     """Train the network."""
     # Define loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(net.parameters(), lr = 0.01)
-
+    
     print(f"Training {epochs} epoch(s) w/ {len(trainloader)} batches each")
     start_time = time.time()
     
@@ -41,7 +147,7 @@ def train(net,
             running_loss += loss.item()
             total_loss += loss.item()
             
-            if i % 100 == 99:  # print every 100 mini-batches
+            if (i % 100 == 99) and verbose:  # print every 100 mini-batches
                 print("[%d, %5d] loss: %.3f" % (epoch + 1, i + 1, running_loss / 100))
                 running_loss = 0.0
                 
@@ -75,8 +181,8 @@ def train(net,
         "validation_rec":val_rec,
         "validation_prec": val_prec,
     }
-
-    print(f"Epoch took: {total_time:.2f} seconds")
+    if verbose:
+        print(f"Epoch took: {total_time:.2f} seconds")
     return results
 
 
@@ -109,11 +215,11 @@ def test(net, testloader, device: str = "cpu"):
     # calculate accuracy
     acc = accuracy_score(y_true, y_pred)
     # calculate precision
-    precision = precision_score(y_true, y_pred, average='micro')
+    precision = precision_score(y_true, y_pred, average='macro')
     # calculate recall
-    recall = recall_score(y_true, y_pred, average='micro')
+    recall = recall_score(y_true, y_pred, average='macro')
     # calculate F1-score
-    f1 = f1_score(y_true, y_pred, average='micro')
+    f1 = f1_score(y_true, y_pred, average='macro')
 
     results = {
         "acc":acc,
