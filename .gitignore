@@ -1,0 +1,11 @@
+data/
+__pycache__
+backup/
+logs/
+*.gguf
+*.ipynb
+.ipynb_checkpoints/
+models/
+test_sample.py
+sample.txt
+fig/*
